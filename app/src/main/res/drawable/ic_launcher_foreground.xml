@@ -1,0 +1,154 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- 1. GEAR SHAPE (Composed of 8 rotating teeth + a main central body circle) -->
+    <!-- Gradient definition for the orange/yellow gear -->
+    <group android:name="gear">
+        <!-- Tooth 0 deg -->
+        <group android:pivotX="54" android:pivotY="54" android:rotation="0">
+            <path
+                android:pathData="M 47,19 L 61,19 L 63,33 L 45,33 Z" >
+                <aapt:attr name="android:fillColor">
+                    <gradient android:startX="54" android:startY="19" android:endX="54" android:endY="33" android:type="linear">
+                        <item android:color="#FFFF9D3B" android:offset="0.0" />
+                        <item android:color="#FFFF6200" android:offset="1.0" />
+                    </gradient>
+                </aapt:attr>
+            </path>
+        </group>
+
+        <!-- Tooth 45 deg -->
+        <group android:pivotX="54" android:pivotY="54" android:rotation="45">
+            <path
+                android:pathData="M 47,19 L 61,19 L 63,33 L 45,33 Z" >
+                <aapt:attr name="android:fillColor">
+                    <gradient android:startX="54" android:startY="19" android:endX="54" android:endY="33" android:type="linear">
+                        <item android:color="#FFFF9D3B" android:offset="0.0" />
+                        <item android:color="#FFFF6200" android:offset="1.0" />
+                    </gradient>
+                </aapt:attr>
+            </path>
+        </group>
+
+        <!-- Tooth 90 deg -->
+        <group android:pivotX="54" android:pivotY="54" android:rotation="90">
+            <path
+                android:pathData="M 47,19 L 61,19 L 63,33 L 45,33 Z" >
+                <aapt:attr name="android:fillColor">
+                    <gradient android:startX="54" android:startY="19" android:endX="54" android:endY="33" android:type="linear">
+                        <item android:color="#FFFF9D3B" android:offset="0.0" />
+                        <item android:color="#FFFF6200" android:offset="1.0" />
+                    </gradient>
+                </aapt:attr>
+            </path>
+        </group>
+
+        <!-- Tooth 135 deg -->
+        <group android:pivotX="54" android:pivotY="54" android:rotation="135">
+            <path
+                android:pathData="M 47,19 L 61,19 L 63,33 L 45,33 Z" >
+                <aapt:attr name="android:fillColor">
+                    <gradient android:startX="54" android:startY="19" android:endX="54" android:endY="33" android:type="linear">
+                        <item android:color="#FFFF9D3B" android:offset="0.0" />
+                        <item android:color="#FFFF6200" android:offset="1.0" />
+                    </gradient>
+                </aapt:attr>
+            </path>
+        </group>
+
+        <!-- Tooth 180 deg -->
+        <group android:pivotX="54" android:pivotY="54" android:rotation="180">
+            <path
+                android:pathData="M 47,19 L 61,19 L 63,33 L 45,33 Z" >
+                <aapt:attr name="android:fillColor">
+                    <gradient android:startX="54" android:startY="19" android:endX="54" android:endY="33" android:type="linear">
+                        <item android:color="#FFFF9D3B" android:offset="0.0" />
+                        <item android:color="#FFFF6200" android:offset="1.0" />
+                    </gradient>
+                </aapt:attr>
+            </path>
+        </group>
+
+        <!-- Tooth 225 deg -->
+        <group android:pivotX="54" android:pivotY="54" android:rotation="225">
+            <path
+                android:pathData="M 47,19 L 61,19 L 63,33 L 45,33 Z" >
+                <aapt:attr name="android:fillColor">
+                    <gradient android:startX="54" android:startY="19" android:endX="54" android:endY="33" android:type="linear">
+                        <item android:color="#FFFF9D3B" android:offset="0.0" />
+                        <item android:color="#FFFF6200" android:offset="1.0" />
+                    </gradient>
+                </aapt:attr>
+            </path>
+        </group>
+
+        <!-- Tooth 270 deg -->
+        <group android:pivotX="54" android:pivotY="54" android:rotation="270">
+            <path
+                android:pathData="M 47,19 L 61,19 L 63,33 L 45,33 Z" >
+                <aapt:attr name="android:fillColor">
+                    <gradient android:startX="54" android:startY="19" android:endX="54" android:endY="33" android:type="linear">
+                        <item android:color="#FFFF9D3B" android:offset="0.0" />
+                        <item android:color="#FFFF6200" android:offset="1.0" />
+                    </gradient>
+                </aapt:attr>
+            </path>
+        </group>
+
+        <!-- Tooth 315 deg -->
+        <group android:pivotX="54" android:pivotY="54" android:rotation="315">
+            <path
+                android:pathData="M 47,19 L 61,19 L 63,33 L 45,33 Z" >
+                <aapt:attr name="android:fillColor">
+                    <gradient android:startX="54" android:startY="19" android:endX="54" android:endY="33" android:type="linear">
+                        <item android:color="#FFFF9D3B" android:offset="0.0" />
+                        <item android:color="#FFFF6200" android:offset="1.0" />
+                    </gradient>
+                </aapt:attr>
+            </path>
+        </group>
+
+        <!-- Main gear central body circle connects everything -->
+        <path
+            android:pathData="M 54,54 m -28,0 a 28,28 0 1,1 56,0 a 28,28 0 1,1 -56,0" >
+            <aapt:attr name="android:fillColor">
+                <gradient android:startX="26" android:startY="26" android:endX="82" android:endY="82" android:type="linear">
+                    <item android:color="#FFFF9D3B" android:offset="0.0" />
+                    <item android:color="#FFFF5500" android:offset="1.0" />
+                </gradient>
+            </aapt:attr>
+        </path>
+    </group>
+
+    <!-- 2. DARK BLUE INNER CIRCLE (Center piece) -->
+    <!-- Uses the sleek visual theme's deep dark color -->
+    <path
+        android:fillColor="#0B132B"
+        android:pathData="M 54,54 m -18,0 a 18,18 0 1,1 36,0 a 18,18 0 1,1 -36,0" />
+
+    <!-- 3. WHITE MAINTENANCE WRENCH SYMBOL -->
+    <!-- Beautiful diagonal wrench rotated 45 degrees for perfect professional tilt -->
+    <group android:pivotX="54" android:pivotY="54" android:rotation="45">
+        <!-- Handle -->
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M 51.5,45 L 56.5,45 L 56.5,69 A 2.5,2.5 0 0,1 51.5,69 Z" />
+        <!-- Head -->
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M 54,44 m -8.5,0 a 8.5,8.5 0 1,1 17,0 a 8.5,8.5 0 1,1 -17,0" />
+        <!-- Head Cutout (Makes it a wrench open-jaw) -->
+        <path
+            android:fillColor="#0B132B"
+            android:pathData="M 50,30 L 58,30 L 58,44 L 50,44 Z" />
+        <!-- Jaw inside notch -->
+        <path
+            android:fillColor="#0B132B"
+            android:pathData="M 54,44 m -4,0 a 4,4 0 1,1 8,0 a 4,4 0 1,1 -8,0" />
+    </group>
+
+</vector>

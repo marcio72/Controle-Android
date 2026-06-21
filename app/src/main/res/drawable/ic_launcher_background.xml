@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    
+    <!-- Rich dark-tech premium background gradient -->
+    <path android:pathData="M0,0h108v108h-108z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:endX="108"
+                android:endY="108"
+                android:startX="0"
+                android:startY="0"
+                android:type="linear">
+                <item
+                    android:color="#0A0E17"
+                    android:offset="0.0" />
+                <item
+                    android:color="#161F38"
+                    android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Concentric tech glowing circles in background symbolizing data flow -->
+    <path
+        android:pathData="M 54,54 m -42,0 a 42,42 0 1,1 84,0 a 42,42 0 1,1 -84,0"
+        android:strokeWidth="1"
+        android:strokeColor="#123B82F6"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M 54,54 m -30,0 a 30,30 0 1,1 60,0 a 30,30 0 1,1 -60,0"
+        android:strokeWidth="0.8"
+        android:strokeColor="#1810B981"
+        android:fillColor="#00000000" />
+
+    <!-- Isometric tech grid markings (elegant background texture) -->
+    <path
+        android:pathData="M15,-10 L120,95 M-15,30 L90,135 M54,-20 L54,128 M-10,54 L118,54"
+        android:strokeWidth="0.5"
+        android:strokeColor="#0AFFFFFF"
+        android:fillColor="#00000000" />
+</vector>

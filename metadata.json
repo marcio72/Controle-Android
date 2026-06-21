@@ -1,0 +1,6 @@
+{
+  "name": "System Pro - Manutencao",
+  "description": "App de gerenciamento e relatórios de clientes e máquinas integrado com Spring Boot",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
