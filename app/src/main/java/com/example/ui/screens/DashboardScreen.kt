@@ -7,6 +7,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -65,8 +66,11 @@ fun DashboardScreen(
     val appMessage by viewModel.appMessage.collectAsState()
 
     var showConfigDialog by remember { mutableStateOf(false) }
-    var screenSection by remember { mutableStateOf("hub") } // "hub", "clientes", "maquinas", "novo_cliente", "nova_maquina"
+    var screenSection by remember { mutableStateOf("hub") } // "hub", "clientes", "maquinas", "novo_cliente", "nova_maquina", "editar_cliente"
     var hubTabIdx by remember { mutableStateOf(0) } // 0 = Início, 1 = Solicitações, 2 = Execuções, 3 = Relatórios, 4 = Perfil
+    var clienteParaEditar by remember { mutableStateOf<Cliente?>(null) }
+    var maquinaParaEditar by remember { mutableStateOf<Maquina?>(null) }
+    var origemEdicaoMaquina by remember { mutableStateOf("clientes") }
 
     // Display SnackBar / Toast cleanly when flow triggers notification
     LaunchedEffect(appMessage) {
@@ -105,7 +109,18 @@ fun DashboardScreen(
                 containerColor = MaterialTheme.colorScheme.background
             ) { innerPadding ->
                 Box(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
-                    TabClientes(viewModel = viewModel)
+                    TabClientes(
+                        viewModel = viewModel,
+                        onEditCliente = { cliente ->
+                            clienteParaEditar = cliente
+                            screenSection = "editar_cliente"
+                        },
+                        onEditMaquina = { maquina ->
+                            maquinaParaEditar = maquina
+                            origemEdicaoMaquina = "clientes"
+                            screenSection = "editar_maquina"
+                        }
+                    )
                 }
             }
         }
@@ -114,6 +129,28 @@ fun DashboardScreen(
                 viewModel = viewModel,
                 onBack = { screenSection = "clientes" }
             )
+        }
+        "editar_cliente" -> {
+            clienteParaEditar?.let { cliente ->
+                EditarClienteScreen(
+                    viewModel = viewModel,
+                    cliente = cliente,
+                    onBack = { screenSection = "clientes" }
+                )
+            } ?: run {
+                screenSection = "clientes"
+            }
+        }
+        "editar_maquina" -> {
+            maquinaParaEditar?.let { maquina ->
+                EditarMaquinaScreen(
+                    viewModel = viewModel,
+                    maquina = maquina,
+                    onBack = { screenSection = origemEdicaoMaquina }
+                )
+            } ?: run {
+                screenSection = origemEdicaoMaquina
+            }
         }
         "maquinas" -> {
             Scaffold(
@@ -143,7 +180,14 @@ fun DashboardScreen(
                 containerColor = MaterialTheme.colorScheme.background
             ) { innerPadding ->
                 Box(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
-                    TabMaquinas(viewModel = viewModel)
+                    TabMaquinas(
+                        viewModel = viewModel,
+                        onEditMaquina = { maquina ->
+                            maquinaParaEditar = maquina
+                            origemEdicaoMaquina = "maquinas"
+                            screenSection = "editar_maquina"
+                        }
+                    )
                 }
             }
         }
@@ -256,7 +300,7 @@ fun DashboardScreen(
                             onNavigateTab = { tab -> hubTabIdx = tab }
                         )
                         1 -> TabSolicitacoesList(viewModel = viewModel)
-                        2 -> TabExecucoesList()
+                        2 -> TabExecucoesList(viewModel)
                         3 -> TabIndicadores(viewModel = viewModel)
                         4 -> TabPerfilTechnical(viewModel = viewModel)
                     }
@@ -281,7 +325,7 @@ fun DashboardScreen(
 }
 
 @Composable
-fun TabClientes(viewModel: AppViewModel) {
+fun TabClientes(viewModel: AppViewModel, onEditCliente: (Cliente) -> Unit = {}, onEditMaquina: (Maquina) -> Unit = {}) {
     val context = LocalContext.current
     val clientes by viewModel.clientes.collectAsState()
     val loading by viewModel.clientesLoading.collectAsState()
@@ -445,7 +489,7 @@ fun TabClientes(viewModel: AppViewModel) {
                     modifier = Modifier.testTag("clientes_list")
                 ) {
                     itemsIndexed(clientes) { index, cliente ->
-                        ClienteCard(cliente = cliente, viewModel = viewModel, context = context)
+                        ClienteCard(cliente = cliente, viewModel = viewModel, context = context, onEdit = onEditCliente, onEditMaquina = onEditMaquina)
                     }
 
                     // Infinite pagination loading indicator
@@ -621,7 +665,7 @@ fun FilterBadge(label: String, onRemove: () -> Unit) {
 }
 
 @Composable
-fun ClienteCard(cliente: Cliente, viewModel: AppViewModel, context: Context) {
+fun ClienteCard(cliente: Cliente, viewModel: AppViewModel, context: Context, onEdit: (Cliente) -> Unit = {}, onEditMaquina: (Maquina) -> Unit = {}) {
     var expanded by remember { mutableStateOf(false) }
     val active = cliente.ativo == true
     val statusColor = if (active) SecondaryEmerald else AccentAmber
@@ -736,15 +780,30 @@ fun ClienteCard(cliente: Cliente, viewModel: AppViewModel, context: Context) {
                             }
                         }
                         Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = cliente.nomCliente ?: "Sem nome cadastrado",
-                            style = MaterialTheme.typography.titleMedium.copy(
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurface
-                            ),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = cliente.nomCliente ?: "Sem nome cadastrado",
+                                style = MaterialTheme.typography.titleMedium.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                ),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Icon(
+                                imageVector = Icons.Default.Edit,
+                                contentDescription = "Editar cliente",
+                                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                                modifier = Modifier
+                                    .size(16.dp)
+                                    .clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = null
+                                    ) { onEdit(cliente) }
+                            )
+                        }
                     }
 
                     // Status Pill
@@ -1120,12 +1179,26 @@ fun ClienteCard(cliente: Cliente, viewModel: AppViewModel, context: Context) {
                                                     )
                                                 }
 
-                                                Box(
-                                                    modifier = Modifier
-                                                        .size(8.dp)
-                                                        .clip(CircleShape)
-                                                        .background(maqStatusColor)
-                                                )
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.Edit,
+                                                        contentDescription = "Editar máquina",
+                                                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                                                        modifier = Modifier
+                                                            .size(15.dp)
+                                                            .clickable(
+                                                                interactionSource = remember { MutableInteractionSource() },
+                                                                indication = null
+                                                            ) { onEditMaquina(maq) }
+                                                    )
+                                                    Spacer(modifier = Modifier.width(8.dp))
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .size(8.dp)
+                                                            .clip(CircleShape)
+                                                            .background(maqStatusColor)
+                                                    )
+                                                }
                                             }
                                         }
                                     }
@@ -1323,8 +1396,470 @@ fun NovoClienteScreen(viewModel: AppViewModel, onBack: () -> Unit) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun TabMaquinas(viewModel: AppViewModel) {
+fun EditarClienteScreen(viewModel: AppViewModel, cliente: Cliente, onBack: () -> Unit) {
+    var nomCliente by remember { mutableStateOf(cliente.nomCliente ?: "") }
+    var telefone by remember { mutableStateOf(cliente.telefone ?: "") }
+    var contato by remember { mutableStateOf(cliente.contato ?: "") }
+    var logradouro by remember { mutableStateOf(cliente.logradouro ?: "") }
+    var bairro by remember { mutableStateOf(cliente.bairro ?: "") }
+    var regiao by remember { mutableStateOf(cliente.regiao) }
+    var expandedRegiao by remember { mutableStateOf(false) }
+    var isSaving by remember { mutableStateOf(false) }
+    var isDeactivating by remember { mutableStateOf(false) }
+    var showConfirmDeactivate by remember { mutableStateOf(false) }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Editar Cliente", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Voltar")
+                    }
+                },
+                actions = {
+                    IconButton(onClick = { showConfirmDeactivate = true }) {
+                        Icon(Icons.Default.Delete, contentDescription = "Desativar cliente", tint = Color(0xFFE53935))
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface
+                )
+            )
+        },
+        containerColor = MaterialTheme.colorScheme.background
+    ) { innerPadding ->
+        Column(
+            modifier = Modifier
+                .padding(innerPadding)
+                .fillMaxSize()
+                .padding(horizontal = 16.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Spacer(modifier = Modifier.height(4.dp))
+
+            Text("Nome do cliente", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f), fontSize = 12.sp)
+            OutlinedTextField(
+                value = nomCliente,
+                onValueChange = { nomCliente = it },
+                placeholder = { Text("Ex: João da Silva Ltda") },
+                singleLine = true,
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Telefone", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f), fontSize = 12.sp)
+                    OutlinedTextField(
+                        value = telefone,
+                        onValueChange = { telefone = it },
+                        placeholder = { Text("(11) 9....") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Contato", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f), fontSize = 12.sp)
+                    OutlinedTextField(
+                        value = contato,
+                        onValueChange = { contato = it },
+                        placeholder = { Text("Responsável") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+
+            Text("Endereço (logradouro)", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f), fontSize = 12.sp)
+            OutlinedTextField(
+                value = logradouro,
+                onValueChange = { logradouro = it },
+                placeholder = { Text("Rua, número") },
+                singleLine = true,
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Text("Bairro", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f), fontSize = 12.sp)
+            OutlinedTextField(
+                value = bairro,
+                onValueChange = { bairro = it },
+                placeholder = { Text("Bairro") },
+                singleLine = true,
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Column {
+                Text("Região", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f), fontSize = 12.sp)
+                Spacer(modifier = Modifier.height(4.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .clickable { expandedRegiao = !expandedRegiao }
+                        .padding(horizontal = 14.dp, vertical = 14.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (regiao != null) ConvertRegiao.fromCode(regiao) else "Selecione a região",
+                            color = if (regiao != null) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                            fontSize = 14.sp
+                        )
+                        Icon(
+                            imageVector = if (expandedRegiao) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown,
+                            contentDescription = null
+                        )
+                    }
+                }
+                if (expandedRegiao) {
+                    Card(
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 4.dp)
+                    ) {
+                        Column {
+                            ConvertRegiao.entries.forEach { r ->
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            regiao = r.code
+                                            expandedRegiao = false
+                                        }
+                                        .padding(12.dp)
+                                ) {
+                                    Text(r.description, fontSize = 13.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Button(
+                onClick = {
+                    if (!isSaving && cliente.codCliente != null) {
+                        isSaving = true
+                        viewModel.performUpdateCliente(
+                            codCliente = cliente.codCliente,
+                            nomCliente = nomCliente,
+                            telefone = telefone,
+                            contato = contato,
+                            logradouro = logradouro,
+                            bairro = bairro,
+                            regiao = regiao
+                        ) { success ->
+                            isSaving = false
+                            if (success) onBack()
+                        }
+                    }
+                },
+                enabled = nomCliente.isNotBlank() && !isSaving,
+                colors = ButtonDefaults.buttonColors(containerColor = BrandOrange),
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.fillMaxWidth().height(50.dp)
+            ) {
+                if (isSaving) {
+                    CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(20.dp))
+                } else {
+                    Text("Salvar alterações", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            }
+
+            OutlinedButton(
+                onClick = { showConfirmDeactivate = true },
+                enabled = !isDeactivating,
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFE53935)),
+                border = BorderStroke(1.dp, Color(0xFFE53935)),
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.fillMaxWidth().height(50.dp)
+            ) {
+                if (isDeactivating) {
+                    CircularProgressIndicator(color = Color(0xFFE53935), strokeWidth = 2.dp, modifier = Modifier.size(20.dp))
+                } else {
+                    Text("Desativar cliente", fontWeight = FontWeight.Bold)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+    }
+
+    if (showConfirmDeactivate) {
+        AlertDialog(
+            onDismissRequest = { showConfirmDeactivate = false },
+            title = { Text("Desativar cliente?") },
+            text = { Text("\"${cliente.nomCliente}\" deixará de aparecer nas listas e na seleção de Nova Solicitação. O histórico de solicitações já registradas será mantido. Você pode reverter isso depois, se precisar.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showConfirmDeactivate = false
+                        if (cliente.codCliente != null) {
+                            isDeactivating = true
+                            viewModel.performDesativarCliente(cliente.codCliente) { success ->
+                                isDeactivating = false
+                                if (success) onBack()
+                            }
+                        }
+                    }
+                ) {
+                    Text("Desativar", color = Color(0xFFE53935), fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showConfirmDeactivate = false }) {
+                    Text("Cancelar")
+                }
+            }
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun EditarMaquinaScreen(viewModel: AppViewModel, maquina: Maquina, onBack: () -> Unit) {
+    val clientes by viewModel.clientesForSelection.collectAsState()
+
+    var selectedCliente by remember {
+        mutableStateOf<Cliente?>(null)
+    }
+    var expandedCliente by remember { mutableStateOf(false) }
+    var numeroMaquina by remember { mutableStateOf(maquina.nom_maq ?: "") }
+    var nomeJogo by remember { mutableStateOf(maquina.nom_jogo ?: "") }
+    var numeroPlaca by remember { mutableStateOf(maquina.numeroPlaca ?: "") }
+    var observacoes by remember { mutableStateOf(maquina.obs ?: "") }
+    var isSaving by remember { mutableStateOf(false) }
+    var isDeactivating by remember { mutableStateOf(false) }
+    var showConfirmDeactivate by remember { mutableStateOf(false) }
+
+    // Pré-seleciona o cliente vinculado assim que a lista de clientes carregar
+    LaunchedEffect(clientes) {
+        if (selectedCliente == null) {
+            selectedCliente = clientes.firstOrNull { it.codCliente?.toInt() == maquina.codCliente }
+        }
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Editar Máquina", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Voltar")
+                    }
+                },
+                actions = {
+                    IconButton(onClick = { showConfirmDeactivate = true }) {
+                        Icon(Icons.Default.Delete, contentDescription = "Desativar máquina", tint = Color(0xFFE53935))
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface
+                )
+            )
+        },
+        containerColor = MaterialTheme.colorScheme.background
+    ) { innerPadding ->
+        Column(
+            modifier = Modifier
+                .padding(innerPadding)
+                .fillMaxSize()
+                .padding(horizontal = 16.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Spacer(modifier = Modifier.height(4.dp))
+
+            Column {
+                Text("Cliente vinculado", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f), fontSize = 12.sp)
+                Spacer(modifier = Modifier.height(4.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .clickable { expandedCliente = !expandedCliente }
+                        .padding(horizontal = 14.dp, vertical = 14.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = selectedCliente?.let { "${it.codCliente} - ${it.nomCliente}" } ?: "Selecione o cliente",
+                            color = if (selectedCliente != null) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                            fontSize = 14.sp
+                        )
+                        Icon(
+                            imageVector = if (expandedCliente) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown,
+                            contentDescription = null
+                        )
+                    }
+                }
+                if (expandedCliente) {
+                    Card(
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 220.dp)
+                            .padding(top = 4.dp)
+                    ) {
+                        LazyColumn(modifier = Modifier.fillMaxWidth()) {
+                            items(clientes) { client ->
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            selectedCliente = client
+                                            expandedCliente = false
+                                        }
+                                        .padding(12.dp)
+                                ) {
+                                    Text("${client.codCliente} - ${client.nomCliente}", fontSize = 13.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Text("Número da máquina", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f), fontSize = 12.sp)
+            OutlinedTextField(
+                value = numeroMaquina,
+                onValueChange = { numeroMaquina = it },
+                singleLine = true,
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Text("Nome do jogo", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f), fontSize = 12.sp)
+            OutlinedTextField(
+                value = nomeJogo,
+                onValueChange = { nomeJogo = it },
+                singleLine = true,
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Text("Número de placa", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f), fontSize = 12.sp)
+            OutlinedTextField(
+                value = numeroPlaca,
+                onValueChange = { numeroPlaca = it },
+                singleLine = true,
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Text("Observações", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f), fontSize = 12.sp)
+            OutlinedTextField(
+                value = observacoes,
+                onValueChange = { observacoes = it },
+                minLines = 3,
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Button(
+                onClick = {
+                    if (!isSaving && maquina.id != null) {
+                        isSaving = true
+                        viewModel.performUpdateMaquina(
+                            id = maquina.id.toInt(),
+                            codCliente = selectedCliente?.codCliente?.toInt(),
+                            numeroMaquina = numeroMaquina,
+                            nomeJogo = nomeJogo,
+                            numeroPlaca = numeroPlaca,
+                            observacoes = observacoes
+                        ) { success ->
+                            isSaving = false
+                            if (success) onBack()
+                        }
+                    }
+                },
+                enabled = selectedCliente != null && numeroMaquina.isNotBlank() && !isSaving,
+                colors = ButtonDefaults.buttonColors(containerColor = BrandOrange),
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.fillMaxWidth().height(50.dp)
+            ) {
+                if (isSaving) {
+                    CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(20.dp))
+                } else {
+                    Text("Salvar alterações", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            }
+
+            OutlinedButton(
+                onClick = { showConfirmDeactivate = true },
+                enabled = !isDeactivating,
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFE53935)),
+                border = BorderStroke(1.dp, Color(0xFFE53935)),
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.fillMaxWidth().height(50.dp)
+            ) {
+                if (isDeactivating) {
+                    CircularProgressIndicator(color = Color(0xFFE53935), strokeWidth = 2.dp, modifier = Modifier.size(20.dp))
+                } else {
+                    Text("Desativar máquina", fontWeight = FontWeight.Bold)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+    }
+
+    if (showConfirmDeactivate) {
+        AlertDialog(
+            onDismissRequest = { showConfirmDeactivate = false },
+            title = { Text("Desativar máquina?") },
+            text = { Text("\"${maquina.nom_maq}\" deixará de aparecer nas listas e na seleção de Nova Solicitação. O histórico de solicitações já registradas será mantido.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showConfirmDeactivate = false
+                        maquina.id?.let { id ->
+                            isDeactivating = true
+                            viewModel.performDesativarMaquina(id.toInt()) { success ->
+                                isDeactivating = false
+                                if (success) onBack()
+                            }
+                        }
+                    }
+                ) {
+                    Text("Desativar", color = Color(0xFFE53935), fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showConfirmDeactivate = false }) {
+                    Text("Cancelar")
+                }
+            }
+        )
+    }
+}
+
+@Composable
+fun TabMaquinas(viewModel: AppViewModel, onEditMaquina: (Maquina) -> Unit) {
     val context = LocalContext.current
     val maquinas by viewModel.maquinas.collectAsState()
     val filteredMaquinas = maquinas.filter { !it.isExcluded() }
@@ -1474,7 +2009,11 @@ fun TabMaquinas(viewModel: AppViewModel) {
                     modifier = Modifier.testTag("maquinas_list")
                 ) {
                     itemsIndexed(filteredMaquinas) { index, maquina ->
-                        MaquinaRowCard(maquina = maquina, viewModel = viewModel)
+                        MaquinaRowCard(
+                            maquina = maquina,
+                            viewModel = viewModel,
+                            onEditMaquina = onEditMaquina
+                        )
                     }
 
                     if (hasMore) {
@@ -1749,7 +2288,11 @@ fun NovaMaquinaScreen(viewModel: AppViewModel, onBack: () -> Unit) {
 }
 
 @Composable
-fun MaquinaRowCard(maquina: Maquina, viewModel: AppViewModel) {
+fun MaquinaRowCard(
+    maquina: Maquina,
+    viewModel: AppViewModel,
+    onEditMaquina: (Maquina) -> Unit
+) {
     var expanded by remember { mutableStateOf(false) }
     val owner = remember(maquina.codCliente) { viewModel.repository.getClientForMachine(maquina.codCliente) }
     val active = maquina.ativo == true
@@ -1884,6 +2427,21 @@ fun MaquinaRowCard(maquina: Maquina, viewModel: AppViewModel) {
                                 )
                             )
                         }
+                    }
+
+                    Spacer(modifier = Modifier.width(8.dp))
+                    IconButton(
+                        onClick = { onEditMaquina(maquina) },
+                        modifier = Modifier
+                            .size(36.dp)
+                            .testTag("edit_machine_button_${maquina.id}")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Edit,
+                            contentDescription = "Editar Máquina",
+                            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                            modifier = Modifier.size(18.dp)
+                        )
                     }
                 }
 
@@ -2750,12 +3308,12 @@ fun QuickAccessGridCard(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
+                .padding(horizontal = 12.dp, vertical = 16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
                 modifier = Modifier
-                    .size(48.dp)
+                    .size(44.dp)
                     .clip(CircleShape)
                     .background(iconColor.copy(alpha = 0.12f)),
                 contentAlignment = Alignment.Center
@@ -2764,16 +3322,19 @@ fun QuickAccessGridCard(
                     imageVector = icon,
                     contentDescription = null,
                     tint = iconColor,
-                    modifier = Modifier.size(24.dp)
+                    modifier = Modifier.size(22.dp)
                 )
             }
-            Spacer(modifier = Modifier.width(12.dp))
+            Spacer(modifier = Modifier.width(8.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = title,
-                    style = MaterialTheme.typography.titleMedium,
+                    fontSize = 14.sp,
                     fontWeight = FontWeight.Bold,
-                    color = Color.White
+                    color = Color.White,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    softWrap = false
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
@@ -2788,7 +3349,7 @@ fun QuickAccessGridCard(
                 imageVector = Icons.Default.ChevronRight,
                 contentDescription = null,
                 tint = Color(0xFF64748B),
-                modifier = Modifier.size(20.dp)
+                modifier = Modifier.size(18.dp)
             )
         }
     }
@@ -3164,13 +3725,12 @@ fun TabSolicitacoesList(viewModel: AppViewModel) {
 }
 
 @Composable
-fun TabExecucoesList() {
-    val execucoes = remember {
-        listOf(
-            Triple("Inspeção de Vibração Concluída", "Máquina: Motor Eletro-Vibrador", "Concluído"),
-            Triple("Lubrificação de Rolamentos", "Máquina: Misturador Industrial", "Concluído"),
-            Triple("Reaperto de Parafusos de Base", "Máquina: Prensa Hidráulica 05", "Concluído")
-        )
+fun TabExecucoesList(viewModel: AppViewModel) {
+    val execucoes by viewModel.execucoes.collectAsState()
+    val loading by viewModel.execucoesLoading.collectAsState()
+
+    LaunchedEffect(Unit) {
+        viewModel.loadExecucoes()
     }
 
     LazyColumn(
@@ -3190,28 +3750,89 @@ fun TabExecucoesList() {
             )
         }
 
-        items(execucoes) { e ->
-            Card(
-                shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = SleekNavyCard),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(14.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+        if (loading) {
+            item {
+                Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = BrandOrange)
+                }
+            }
+        } else if (execucoes.isEmpty()) {
+            item {
+                Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
+                    Text("Nenhuma execução registrada.", color = Color(0xFF64748B), fontSize = 14.sp)
+                }
+            }
+        } else {
+            items(execucoes) { e ->
+                Card(
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = SleekNavyCard),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(e.first, fontWeight = FontWeight.Bold, color = Color.White)
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(e.second, fontSize = 12.sp, color = Color(0xFF64748B))
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Check, contentDescription = "Concluído", tint = Color(0xFF10B981), modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(e.third, color = Color(0xFF10B981), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = e.nomeCliente ?: "Cliente desconhecido",
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White,
+                                fontSize = 14.sp
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "Máquina: ${e.nomeMaquina ?: "-"}",
+                                fontSize = 12.sp,
+                                color = Color(0xFF64748B)
+                            )
+                            if (!e.descricaoProblema.isNullOrBlank()) {
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = e.descricaoProblema,
+                                    fontSize = 11.sp,
+                                    color = Color(0xFF94A3B8),
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            if (!e.tecnico.isNullOrBlank()) {
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Técnico: ${e.tecnico}",
+                                    fontSize = 11.sp,
+                                    color = BrandOrange
+                                )
+                            }
+                        }
+                        Column(horizontalAlignment = Alignment.End) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    Icons.Default.Check,
+                                    contentDescription = "Concluído",
+                                    tint = Color(0xFF10B981),
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Concluído", color = Color(0xFF10B981), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                            if (e.pdfGerado == true) {
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        Icons.Default.Description,
+                                        contentDescription = "PDF",
+                                        tint = Color(0xFF64748B),
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(2.dp))
+                                    Text("PDF", color = Color(0xFF64748B), fontSize = 10.sp)
+                                }
+                            }
+                        }
                     }
                 }
             }

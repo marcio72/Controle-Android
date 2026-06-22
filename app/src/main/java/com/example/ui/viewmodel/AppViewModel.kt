@@ -57,6 +57,25 @@ class AppViewModel : ViewModel() {
     private val _clientesForSelection = MutableStateFlow<List<Cliente>>(emptyList())
     val clientesForSelection: StateFlow<List<Cliente>> = _clientesForSelection.asStateFlow()
 
+    private val _execucoes = MutableStateFlow<List<com.example.data.model.ExecucaoDTO>>(emptyList())
+    val execucoes: StateFlow<List<com.example.data.model.ExecucaoDTO>> = _execucoes.asStateFlow()
+
+    private val _execucoesLoading = MutableStateFlow(false)
+    val execucoesLoading: StateFlow<Boolean> = _execucoesLoading.asStateFlow()
+
+    fun loadExecucoes() {
+        viewModelScope.launch {
+            _execucoesLoading.value = true
+            try {
+                _execucoes.value = repository.getExecucoes()
+            } catch (e: Exception) {
+                Log.e("AppViewModel", "loadExecucoes error: ${e.message}")
+            } finally {
+                _execucoesLoading.value = false
+            }
+        }
+    }
+
     private val _clientesLoading = MutableStateFlow(false)
     val clientesLoading: StateFlow<Boolean> = _clientesLoading.asStateFlow()
 
@@ -576,6 +595,7 @@ class AppViewModel : ViewModel() {
                 if (errorMsg == null) {
                     showNotification("Máquina \"${maquina.nom_maq}\" cadastrada com sucesso!")
                     loadClientes(reset = true)
+                    loadMaquinas(reset = true)
                     onResult(true)
                 } else {
                     showNotification("Falha ao salvar máquina: $errorMsg")
@@ -584,6 +604,146 @@ class AppViewModel : ViewModel() {
             } catch (e: Exception) {
                 Log.e("AppViewModel", "createMaquina error: ${e.message}", e)
                 showNotification("Erro ao enviar máquina para o back-end.")
+                onResult(false)
+            }
+        }
+    }
+
+    fun performUpdateCliente(
+        codCliente: Long,
+        nomCliente: String,
+        telefone: String,
+        contato: String,
+        logradouro: String,
+        bairro: String,
+        regiao: Int?,
+        onResult: (Boolean) -> Unit
+    ) {
+        if (nomCliente.isBlank()) {
+            showNotification("Informe o nome do cliente.")
+            onResult(false)
+            return
+        }
+
+        viewModelScope.launch {
+            try {
+                val cliente = com.example.data.model.Cliente(
+                    codCliente = codCliente,
+                    nomCliente = nomCliente.trim(),
+                    logradouro = logradouro.ifBlank { null },
+                    telefone = telefone.ifBlank { null },
+                    bairro = bairro.ifBlank { null },
+                    contato = contato.ifBlank { null },
+                    leiturista = null,
+                    regiao = regiao,
+                    dtCadastro = null,
+                    ativo = true,
+                    maquinas = emptyList()
+                )
+
+                val errorMsg = repository.updateCliente(codCliente, cliente)
+                if (errorMsg == null) {
+                    showNotification("Cliente atualizado com sucesso!")
+                    loadClientes(reset = true)
+                    onResult(true)
+                } else {
+                    showNotification("Falha ao atualizar cliente: $errorMsg")
+                    onResult(false)
+                }
+            } catch (e: Exception) {
+                Log.e("AppViewModel", "updateCliente error: ${e.message}", e)
+                showNotification("Erro ao enviar atualização para o back-end.")
+                onResult(false)
+            }
+        }
+    }
+
+    fun performDesativarCliente(codCliente: Long, onResult: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val errorMsg = repository.desativarCliente(codCliente)
+                if (errorMsg == null) {
+                    showNotification("Cliente desativado.")
+                    loadClientes(reset = true)
+                    onResult(true)
+                } else {
+                    showNotification("Falha ao desativar cliente: $errorMsg")
+                    onResult(false)
+                }
+            } catch (e: Exception) {
+                Log.e("AppViewModel", "desativarCliente error: ${e.message}", e)
+                showNotification("Erro ao enviar para o back-end.")
+                onResult(false)
+            }
+        }
+    }
+
+    fun performUpdateMaquina(
+        id: Int,
+        codCliente: Int?,
+        numeroMaquina: String,
+        nomeJogo: String,
+        numeroPlaca: String,
+        observacoes: String,
+        onResult: (Boolean) -> Unit
+    ) {
+        if (codCliente == null) {
+            showNotification("Selecione o cliente vinculado à máquina.")
+            onResult(false)
+            return
+        }
+        if (numeroMaquina.isBlank()) {
+            showNotification("Informe o número da máquina.")
+            onResult(false)
+            return
+        }
+
+        viewModelScope.launch {
+            try {
+                val maquina = com.example.data.model.Maquina(
+                    id = id.toLong(),
+                    nom_maq = numeroMaquina.trim(),
+                    nom_jogo = nomeJogo.ifBlank { null },
+                    numeroPlaca = numeroPlaca.ifBlank { null },
+                    obs = observacoes.ifBlank { null },
+                    codCliente = codCliente,
+                    ativo = true
+                )
+
+                val errorMsg = repository.updateMaquina(id, maquina)
+                if (errorMsg == null) {
+                    showNotification("Máquina atualizada com sucesso!")
+                    loadClientes(reset = true)
+                    loadMaquinas(reset = true)
+                    onResult(true)
+                } else {
+                    showNotification("Falha ao atualizar máquina: $errorMsg")
+                    onResult(false)
+                }
+            } catch (e: Exception) {
+                Log.e("AppViewModel", "updateMaquina error: ${e.message}", e)
+                showNotification("Erro ao enviar atualização para o back-end.")
+                onResult(false)
+            }
+        }
+    }
+
+    fun performDesativarMaquina(id: Int, onResult: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val errorMsg = repository.desativarMaquina(id)
+                if (errorMsg == null) {
+                    showNotification("Máquina desativada.")
+                    loadClientes(reset = true)
+                    loadMaquinas(reset = true)
+                    onResult(true)
+                } else {
+                    showNotification("Falha ao desativar máquina: $errorMsg")
+                    onResult(false)
+                }
+            } catch (e: Exception) {
+                Log.e("AppViewModel", "desativarMaquina error: ${e.message}", e)
+                showNotification("Erro ao enviar para o back-end.")
                 onResult(false)
             }
         }

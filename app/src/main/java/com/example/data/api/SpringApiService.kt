@@ -98,4 +98,29 @@ interface SpringApiService {
     suspend fun createMaquina(
         @Body maquina: Maquina
     ): Response<Maquina>
+
+    @PUT("api/clientes/{id}")
+    suspend fun updateCliente(
+        @Path("id") id: Long,
+        @Body cliente: Cliente
+    ): Response<Cliente>
+
+    @PATCH("api/clientes/{id}/desativar")
+    suspend fun desativarCliente(
+        @Path("id") id: Long
+    ): Response<Unit>
+
+    @PUT("maquinas/editar/{id}")
+    suspend fun updateMaquina(
+        @Path("id") id: Int,
+        @Body maquina: Maquina
+    ): Response<Maquina>
+
+    @PATCH("api/maquinas/{id}/desativar")
+    suspend fun desativarMaquina(
+        @Path("id") id: Int
+    ): Response<Unit>
+
+    @GET("api/execucoes")
+    suspend fun getExecucoes(): List<com.example.data.model.ExecucaoDTO>
 }

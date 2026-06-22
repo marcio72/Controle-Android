@@ -658,6 +658,125 @@ class DataRepository {
         }
     }
 
+    suspend fun updateCliente(id: Long, cliente: com.example.data.model.Cliente): String? {
+        if (_isDemoMode.value) {
+            val idx = mockClientes.indexOfFirst { it.codCliente == id }
+            if (idx >= 0) {
+                mockClientes[idx] = cliente.copy(codCliente = id, ativo = mockClientes[idx].ativo)
+            }
+            return null
+        }
+
+        try {
+            val response = apiService?.updateCliente(id, cliente)
+            if (response != null && !response.isSuccessful) {
+                val errorBody = response.errorBody()?.string() ?: ""
+                Log.e("DataRepository", "updateCliente HTTP error ${response.code()}: $errorBody")
+                return "HTTP ${response.code()}: ${if (errorBody.length > 80) errorBody.take(80) + "..." else errorBody}"
+            }
+            return null
+        } catch (e: retrofit2.HttpException) {
+            val errorBody = e.response()?.errorBody()?.string() ?: ""
+            Log.e("DataRepository", "updateCliente HTTP error ${e.code()}: $errorBody")
+            return "HTTP ${e.code()}: ${if (errorBody.length > 80) errorBody.take(80) + "..." else errorBody}"
+        } catch (e: Exception) {
+            Log.e("DataRepository", "updateCliente failed: ${e.message}")
+            return e.message ?: "Erro desconhecido"
+        }
+    }
+
+    suspend fun desativarCliente(id: Long): String? {
+        if (_isDemoMode.value) {
+            val idx = mockClientes.indexOfFirst { it.codCliente == id }
+            if (idx >= 0) {
+                mockClientes[idx] = mockClientes[idx].copy(ativo = false)
+            }
+            return null
+        }
+
+        try {
+            val response = apiService?.desativarCliente(id)
+            if (response != null && !response.isSuccessful) {
+                val errorBody = response.errorBody()?.string() ?: ""
+                Log.e("DataRepository", "desativarCliente HTTP error ${response.code()}: $errorBody")
+                return "HTTP ${response.code()}: ${if (errorBody.length > 80) errorBody.take(80) + "..." else errorBody}"
+            }
+            return null
+        } catch (e: retrofit2.HttpException) {
+            val errorBody = e.response()?.errorBody()?.string() ?: ""
+            Log.e("DataRepository", "desativarCliente HTTP error ${e.code()}: $errorBody")
+            return "HTTP ${e.code()}: ${if (errorBody.length > 80) errorBody.take(80) + "..." else errorBody}"
+        } catch (e: Exception) {
+            Log.e("DataRepository", "desativarCliente failed: ${e.message}")
+            return e.message ?: "Erro desconhecido"
+        }
+    }
+
+    suspend fun updateMaquina(id: Int, maquina: com.example.data.model.Maquina): String? {
+        if (_isDemoMode.value) {
+            return null
+        }
+
+        try {
+            val response = apiService?.updateMaquina(id, maquina)
+            if (response != null && !response.isSuccessful) {
+                val errorBody = response.errorBody()?.string() ?: ""
+                Log.e("DataRepository", "updateMaquina HTTP error ${response.code()}: $errorBody")
+                return "HTTP ${response.code()}: ${if (errorBody.length > 80) errorBody.take(80) + "..." else errorBody}"
+            }
+            return null
+        } catch (e: retrofit2.HttpException) {
+            val errorBody = e.response()?.errorBody()?.string() ?: ""
+            Log.e("DataRepository", "updateMaquina HTTP error ${e.code()}: $errorBody")
+            return "HTTP ${e.code()}: ${if (errorBody.length > 80) errorBody.take(80) + "..." else errorBody}"
+        } catch (e: Exception) {
+            Log.e("DataRepository", "updateMaquina failed: ${e.message}")
+            return e.message ?: "Erro desconhecido"
+        }
+    }
+
+    suspend fun desativarMaquina(id: Int): String? {
+        if (_isDemoMode.value) {
+            return null
+        }
+
+        try {
+            val response = apiService?.desativarMaquina(id)
+            if (response != null && !response.isSuccessful) {
+                val errorBody = response.errorBody()?.string() ?: ""
+                Log.e("DataRepository", "desativarMaquina HTTP error ${response.code()}: $errorBody")
+                return "HTTP ${response.code()}: ${if (errorBody.length > 80) errorBody.take(80) + "..." else errorBody}"
+            }
+            return null
+        } catch (e: retrofit2.HttpException) {
+            val errorBody = e.response()?.errorBody()?.string() ?: ""
+            Log.e("DataRepository", "desativarMaquina HTTP error ${e.code()}: $errorBody")
+            return "HTTP ${e.code()}: ${if (errorBody.length > 80) errorBody.take(80) + "..." else errorBody}"
+        } catch (e: Exception) {
+            Log.e("DataRepository", "desativarMaquina failed: ${e.message}")
+            return e.message ?: "Erro desconhecido"
+        }
+    }
+
+    suspend fun getExecucoes(): List<com.example.data.model.ExecucaoDTO> {
+        if (_isDemoMode.value) {
+            return listOf(
+                com.example.data.model.ExecucaoDTO(
+                    id = 1L, nomeCliente = "Demo Cliente", nomeMaquina = "Demo Máquina",
+                    descricaoProblema = "Tela piscando", descricao = "Troca de placa realizada",
+                    tecnico = "Técnico Demo", pdfGerado = false
+                )
+            )
+        }
+
+        return try {
+            apiService?.getExecucoes() ?: emptyList()
+        } catch (e: Exception) {
+            Log.e("DataRepository", "getExecucoes failed: ${e.message}")
+            emptyList()
+        }
+    }
+
     private fun generateMockSolicitacoes() {
         localSolicitacoes.clear()
         for (i in 1..8) {
