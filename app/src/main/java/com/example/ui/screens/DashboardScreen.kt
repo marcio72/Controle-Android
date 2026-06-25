@@ -2,6 +2,11 @@ package com.example.ui.screens
 
 import android.content.Context
 import androidx.compose.animation.*
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -30,7 +35,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -71,6 +78,7 @@ fun DashboardScreen(
     var clienteParaEditar by remember { mutableStateOf<Cliente?>(null) }
     var maquinaParaEditar by remember { mutableStateOf<Maquina?>(null) }
     var origemEdicaoMaquina by remember { mutableStateOf("clientes") }
+    var solicitacaoParaExecutar by remember { mutableStateOf<com.example.data.model.SolicitacaoResponseDTO?>(null) }
 
     // Display SnackBar / Toast cleanly when flow triggers notification
     LaunchedEffect(appMessage) {
@@ -197,6 +205,21 @@ fun DashboardScreen(
                 onBack = { screenSection = "maquinas" }
             )
         }
+        "executar_solicitacao" -> {
+            solicitacaoParaExecutar?.let { solicitacao ->
+                ExecutarSolicitacaoScreen(
+                    viewModel = viewModel,
+                    solicitacao = solicitacao,
+                    onBack = {
+                        solicitacaoParaExecutar = null
+                        screenSection = "hub"
+                        hubTabIdx = 1
+                    }
+                )
+            } ?: run {
+                screenSection = "hub"
+            }
+        }
         else -> {
             Scaffold(
                 topBar = {
@@ -299,7 +322,13 @@ fun DashboardScreen(
                             onNavigateSection = { section -> screenSection = section },
                             onNavigateTab = { tab -> hubTabIdx = tab }
                         )
-                        1 -> TabSolicitacoesList(viewModel = viewModel)
+                        1 -> TabSolicitacoesList(
+                            viewModel = viewModel,
+                            onExecutar = { solicitacao ->
+                                solicitacaoParaExecutar = solicitacao
+                                screenSection = "executar_solicitacao"
+                            }
+                        )
                         2 -> TabExecucoesList(viewModel)
                         3 -> TabIndicadores(viewModel = viewModel)
                         4 -> TabPerfilTechnical(viewModel = viewModel)
@@ -3182,11 +3211,11 @@ fun TabInicio(
                     )
                     QuickAccessGridCard(
                         modifier = Modifier.weight(1f),
-                        title = "Relatórios",
-                        description = "Visualizar relatórios",
-                        icon = Icons.Default.BarChart,
+                        title = "Execuções",
+                        description = "Visualizar execuções",
+                        icon = Icons.Default.Build,
                         iconColor = Color(0xFF38BDF8),
-                        onClick = { onNavigateTab(3) }
+                        onClick = { onNavigateTab(2) }
                     )
                 }
             }
@@ -3371,17 +3400,66 @@ fun NewSolicitacaoDialog(
     var selectedMaquina by remember { mutableStateOf<com.example.data.model.Maquina?>(null) }
     var expandedMaquinaDropdown by remember { mutableStateOf(false) }
 
-    Dialog(onDismissRequest = onDismiss) {
-        Card(
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = SleekNavyCard),
-            modifier = Modifier.padding(16.dp)
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(0.92f)
+                .widthIn(max = 520.dp)
+                .padding(24.dp)
+                .drawBehind {
+                    val glowColor = BrandOrange
+                    val radius = 16.dp.toPx()
+                    
+                    // Outer super soft and wide atmospheric glow (huge diffusion)
+                    drawRoundRect(
+                        color = glowColor.copy(alpha = 0.03f),
+                        topLeft = Offset(-32.dp.toPx(), -32.dp.toPx()),
+                        size = this.size.copy(
+                            width = this.size.width + 64.dp.toPx(),
+                            height = this.size.height + 64.dp.toPx()
+                        ),
+                        cornerRadius = CornerRadius(radius + 32.dp.toPx(), radius + 32.dp.toPx())
+                    )
+
+                    // Mid soft glow
+                    drawRoundRect(
+                        color = glowColor.copy(alpha = 0.07f),
+                        topLeft = Offset(-18.dp.toPx(), -18.dp.toPx()),
+                        size = this.size.copy(
+                            width = this.size.width + 36.dp.toPx(),
+                            height = this.size.height + 36.dp.toPx()
+                        ),
+                        cornerRadius = CornerRadius(radius + 18.dp.toPx(), radius + 18.dp.toPx())
+                    )
+
+                    // Inner soft halo
+                    drawRoundRect(
+                        color = glowColor.copy(alpha = 0.15f),
+                        topLeft = Offset(-8.dp.toPx(), -8.dp.toPx()),
+                        size = this.size.copy(
+                            width = this.size.width + 16.dp.toPx(),
+                            height = this.size.height + 16.dp.toPx()
+                        ),
+                        cornerRadius = CornerRadius(radius + 8.dp.toPx(), radius + 8.dp.toPx())
+                    )
+                }
         ) {
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = SleekNavyCard),
+                border = BorderStroke(1.dp, BrandOrange.copy(alpha = 0.35f)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 480.dp)
+            ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(20.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                    .padding(24.dp),
+                verticalArrangement = Arrangement.spacedBy(20.dp)
             ) {
                 Text(
                     text = "Abertura de Solicitação",
@@ -3561,7 +3639,7 @@ fun NewSolicitacaoDialog(
                                 fontFamily = FontFamily.Monospace
                             )
                         },
-                        minLines = 3,
+                        minLines = 5,
                         textStyle = androidx.compose.ui.text.TextStyle(
                             fontFamily = FontFamily.Monospace,
                             fontSize = 14.sp
@@ -3576,7 +3654,9 @@ fun NewSolicitacaoDialog(
                             unfocusedBorderColor = TerminalBorder,
                             cursorColor = TerminalGreenBright
                         ),
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 140.dp)
                     )
                 }
 
@@ -3604,12 +3684,30 @@ fun NewSolicitacaoDialog(
                 }
             }
         }
+        }
     }
 }
 
 @Composable
-fun TabSolicitacoesList(viewModel: AppViewModel) {
+fun TabSolicitacoesList(
+    viewModel: AppViewModel,
+    onExecutar: (com.example.data.model.SolicitacaoResponseDTO) -> Unit = {}
+) {
     val solicitacoesList by viewModel.solicitacoesList.collectAsState()
+    val lastUpdated by viewModel.solicitacoesLastUpdated.collectAsState()
+    val pollingActive by viewModel.solicitacoesPollingActive.collectAsState()
+
+    // Animação de pulso no ícone de sincronização
+    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+    val pulseAlpha by infiniteTransition.animateFloat(
+        initialValue = 1f,
+        targetValue = 0.3f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1000, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "pulseAlpha"
+    )
 
     LazyColumn(
         modifier = Modifier
@@ -3619,19 +3717,50 @@ fun TabSolicitacoesList(viewModel: AppViewModel) {
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         item {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Solicitações de Serviço (Backend)",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White
-                )
-                IconButton(onClick = { viewModel.loadDashboardMetrics() }) {
-                    Icon(Icons.Default.Refresh, contentDescription = "Atualizar", tint = BrandOrange)
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Solicitações de Serviço",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (pollingActive) {
+                            Icon(
+                                imageVector = Icons.Default.Sync,
+                                contentDescription = "Auto-sync ativo",
+                                tint = Color(0xFF10B981).copy(alpha = pulseAlpha),
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                        }
+                        IconButton(onClick = { viewModel.refreshSolicitacoesManual() }) {
+                            Icon(Icons.Default.Refresh, contentDescription = "Atualizar agora", tint = BrandOrange)
+                        }
+                    }
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Schedule,
+                        contentDescription = null,
+                        tint = Color(0xFF64748B),
+                        modifier = Modifier.size(12.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = if (lastUpdated != null) "Atualizado às $lastUpdated · auto 30s"
+                               else "Aguardando primeira atualização...",
+                        fontSize = 11.sp,
+                        color = Color(0xFF64748B)
+                    )
                 }
             }
         }
@@ -3717,6 +3846,31 @@ fun TabSolicitacoesList(viewModel: AppViewModel) {
                                 }
                             }
                         }
+
+                        // Botão Executar — só aparece para solicitações abertas
+                        if (s.status == true) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Button(
+                                onClick = { onExecutar(s) },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(8.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = BrandOrange)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.PlayArrow,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    "Executar chamado",
+                                    color = Color.White,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -3728,6 +3882,31 @@ fun TabSolicitacoesList(viewModel: AppViewModel) {
 fun TabExecucoesList(viewModel: AppViewModel) {
     val execucoes by viewModel.execucoes.collectAsState()
     val loading by viewModel.execucoesLoading.collectAsState()
+    var filterTodayOnly by remember { mutableStateOf(true) }
+
+    val today = remember { java.util.Date() }
+    val todayYmd = remember { java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(today) }
+    val todayDmy = remember { java.text.SimpleDateFormat("dd/MM/yyyy", java.util.Locale.US).format(today) }
+    val isDemo = viewModel.isDemoMode.collectAsState().value
+
+    val filteredExecucoes = remember(execucoes, filterTodayOnly, isDemo) {
+        if (filterTodayOnly) {
+            execucoes.filter { e ->
+                val dateStr = e.dataExecucao
+                if (dateStr.isNullOrBlank()) {
+                    isDemo
+                } else {
+                    // Backend retorna "yyyy-MM-dd'T'HH:mm:ss" ou "yyyy-MM-dd HH:mm:ss"
+                    // Normaliza removendo T e pegando só a parte da data
+                    val normalizado = dateStr.replace("T", " ").trim()
+                    val datePart = normalizado.take(10) // "yyyy-MM-dd"
+                    datePart == todayYmd || dateStr.contains(todayDmy)
+                }
+            }
+        } else {
+            execucoes
+        }
+    }
 
     LaunchedEffect(Unit) {
         viewModel.loadExecucoes()
@@ -3741,13 +3920,59 @@ fun TabExecucoesList(viewModel: AppViewModel) {
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         item {
-            Text(
-                text = "Serviços Executados",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = Color.White,
-                modifier = Modifier.padding(bottom = 8.dp)
-            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Serviços Executados",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
+                
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(if (filterTodayOnly) BrandOrange else SleekNavyCard)
+                            .border(1.dp, if (filterTodayOnly) BrandOrange else Color(0xFF334155), RoundedCornerShape(20.dp))
+                            .clickable { filterTodayOnly = true }
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "Hoje",
+                            color = if (filterTodayOnly) Color.White else Color(0xFF94A3B8),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(if (!filterTodayOnly) BrandOrange else SleekNavyCard)
+                            .border(1.dp, if (!filterTodayOnly) BrandOrange else Color(0xFF334155), RoundedCornerShape(20.dp))
+                            .clickable { filterTodayOnly = false }
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "Todas",
+                            color = if (!filterTodayOnly) Color.White else Color(0xFF94A3B8),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
         }
 
         if (loading) {
@@ -3756,82 +3981,179 @@ fun TabExecucoesList(viewModel: AppViewModel) {
                     CircularProgressIndicator(color = BrandOrange)
                 }
             }
-        } else if (execucoes.isEmpty()) {
+        } else if (filteredExecucoes.isEmpty()) {
             item {
                 Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
-                    Text("Nenhuma execução registrada.", color = Color(0xFF64748B), fontSize = 14.sp)
+                    Text(
+                        text = if (filterTodayOnly) {
+                            "Nenhum serviço registrado hoje.\nToque em 'Todas' para ver o histórico."
+                        } else {
+                            "Nenhuma execução registrada."
+                        },
+                        color = Color(0xFF64748B),
+                        fontSize = 14.sp,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
                 }
             }
         } else {
-            items(execucoes) { e ->
+            items(filteredExecucoes) { e ->
+                var expanded by remember { mutableStateOf(false) }
                 Card(
                     shape = RoundedCornerShape(12.dp),
                     colors = CardDefaults.cardColors(containerColor = SleekNavyCard),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Row(
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(14.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.Top
+                            .padding(14.dp)
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = e.nomeCliente ?: "Cliente desconhecido",
-                                fontWeight = FontWeight.Bold,
-                                color = Color.White,
-                                fontSize = 14.sp
-                            )
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                text = "Máquina: ${e.nomeMaquina ?: "-"}",
-                                fontSize = 12.sp,
-                                color = Color(0xFF64748B)
-                            )
-                            if (!e.descricaoProblema.isNullOrBlank()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.Top
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = e.nomeCliente ?: "Cliente desconhecido",
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White,
+                                    fontSize = 14.sp
+                                )
                                 Spacer(modifier = Modifier.height(2.dp))
                                 Text(
-                                    text = e.descricaoProblema,
-                                    fontSize = 11.sp,
-                                    color = Color(0xFF94A3B8),
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis
+                                    text = "Máquina: ${e.nomeMaquina ?: "-"}",
+                                    fontSize = 12.sp,
+                                    color = Color(0xFF64748B)
                                 )
-                            }
-                            if (!e.tecnico.isNullOrBlank()) {
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = "Técnico: ${e.tecnico}",
-                                    fontSize = 11.sp,
-                                    color = BrandOrange
-                                )
-                            }
-                        }
-                        Column(horizontalAlignment = Alignment.End) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    Icons.Default.Check,
-                                    contentDescription = "Concluído",
-                                    tint = Color(0xFF10B981),
-                                    modifier = Modifier.size(14.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Concluído", color = Color(0xFF10B981), fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                            }
-                            if (e.pdfGerado == true) {
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(
-                                        Icons.Default.Description,
-                                        contentDescription = "PDF",
-                                        tint = Color(0xFF64748B),
-                                        modifier = Modifier.size(12.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(2.dp))
-                                    Text("PDF", color = Color(0xFF64748B), fontSize = 10.sp)
+                                if (!e.dataExecucao.isNullOrBlank()) {
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            imageVector = Icons.Default.CalendarToday,
+                                            contentDescription = "Data",
+                                            tint = Color(0xFF94A3B8),
+                                            modifier = Modifier.size(11.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = e.dataExecucao,
+                                            fontSize = 11.sp,
+                                            color = Color(0xFF94A3B8)
+                                        )
+                                    }
                                 }
                             }
+                            Column(horizontalAlignment = Alignment.End) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        Icons.Default.Check,
+                                        contentDescription = "Concluído",
+                                        tint = Color(0xFF10B981),
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Concluído", color = Color(0xFF10B981), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                                if (e.pdfGerado == true) {
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            Icons.Default.Description,
+                                            contentDescription = "PDF",
+                                            tint = Color(0xFF64748B),
+                                            modifier = Modifier.size(12.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(2.dp))
+                                        Text("PDF", color = Color(0xFF64748B), fontSize = 10.sp)
+                                    }
+                                }
+                            }
+                        }
+
+                        if (!e.descricaoProblema.isNullOrBlank()) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = "Problema original: ${e.descricaoProblema}",
+                                fontSize = 11.sp,
+                                color = Color(0xFF94A3B8),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(TerminalBackground, RoundedCornerShape(6.dp))
+                                .border(1.dp, TerminalBorder.copy(alpha = 0.5f), RoundedCornerShape(6.dp))
+                                .clickable { expanded = !expanded }
+                                .padding(10.dp)
+                        ) {
+                            Column(modifier = Modifier.animateContentSize()) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(6.dp)
+                                                .background(TerminalGreenBright, CircleShape)
+                                        )
+                                        Text(
+                                            text = "SERVIÇO EXECUTADO:",
+                                            fontFamily = FontFamily.Monospace,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = TerminalGreenBright
+                                        )
+                                    }
+                                    Text(
+                                        text = if (expanded) "RECOLHER [-]" else "EXPANDIR [+]",
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = TerminalGreenBright.copy(alpha = 0.8f)
+                                    )
+                                }
+                                if (expanded) {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text(
+                                        text = e.descricao ?: "Sem registro de execução",
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 12.sp,
+                                        color = TerminalGreenBright,
+                                        lineHeight = 16.sp
+                                    )
+                                } else {
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = e.descricao ?: "Sem registro de execução",
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 12.sp,
+                                        color = TerminalGreen.copy(alpha = 0.7f),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        lineHeight = 16.sp
+                                    )
+                                }
+                            }
+                        }
+
+                        if (!e.tecnico.isNullOrBlank()) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = "Técnico: ${e.tecnico}",
+                                fontSize = 11.sp,
+                                color = BrandOrange
+                            )
                         }
                     }
                 }

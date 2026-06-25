@@ -130,6 +130,33 @@ data class SolicitacaoResponseDTO(
     @Json(name = "problemas") val problemas: List<ProblemaDTO>? = null
 )
 
+// ---- EXECUÇÃO DE SOLICITAÇÃO ----
+
+@JsonClass(generateAdapter = true)
+data class ExecucaoRequestDTO(
+    @Json(name = "problemaId")    val problemaId: Long,
+    @Json(name = "solicitacaoId") val solicitacaoId: Long,
+    @Json(name = "dataExecucao")  val dataExecucao: String,   // "yyyy-MM-dd'T'HH:mm:ss"
+    @Json(name = "tecnico")       val tecnico: String,
+    @Json(name = "descricao")     val descricao: String,
+    @Json(name = "pecasUsadas")   val pecasUsadas: List<Long> = emptyList()
+)
+
+@JsonClass(generateAdapter = true)
+data class CategoriaDTO(
+    @Json(name = "id")    val id: Long,
+    @Json(name = "nome")  val nome: String,
+    @Json(name = "alias") val alias: String?
+)
+
+@JsonClass(generateAdapter = true)
+data class PecaDTO(
+    @Json(name = "idPeca")   val idPeca: Long,
+    @Json(name = "codigo")   val codigo: String,
+    @Json(name = "status")   val status: String?,
+    @Json(name = "categoria") val categoria: CategoriaDTO?
+)
+
 @JsonClass(generateAdapter = true)
 data class ExecucaoDTO(
     @Json(name = "id") val id: Long? = null,
@@ -138,7 +165,7 @@ data class ExecucaoDTO(
     @Json(name = "descricaoProblema") val descricaoProblema: String? = null,
     @Json(name = "descricao") val descricao: String? = null,
     @Json(name = "observacoes") val observacoes: String? = null,
-    @Json(name = "DataExecucao") val dataExecucao: String? = null,
+    @Json(name = "dataExecucao") val dataExecucao: String? = null,
     @Json(name = "valor") val valor: Double? = null,
     @Json(name = "tecnico") val tecnico: String? = null,
     @Json(name = "pdfGerado") val pdfGerado: Boolean? = null

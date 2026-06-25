@@ -123,4 +123,17 @@ interface SpringApiService {
 
     @GET("api/execucoes")
     suspend fun getExecucoes(): List<com.example.data.model.ExecucaoDTO>
+
+    @POST("api/execucoes-com-estoque/registrar")
+    suspend fun registrarExecucao(
+        @Body execucoes: List<com.example.data.model.ExecucaoRequestDTO>
+    ): retrofit2.Response<okhttp3.ResponseBody>
+
+    @GET("api/pecas/disponiveis/{categoriaId}")
+    suspend fun getPecasDisponiveis(
+        @Path("categoriaId") categoriaId: Long
+    ): List<com.example.data.model.PecaDTO>
+
+    @GET("api/categorias")
+    suspend fun getCategorias(): List<com.example.data.model.CategoriaDTO>
 }

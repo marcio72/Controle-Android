@@ -18,8 +18,11 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.File
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
 
 class AppViewModel : ViewModel() {
 
@@ -41,6 +44,14 @@ class AppViewModel : ViewModel() {
 
     private val _solicitacoesList = MutableStateFlow<List<SolicitacaoResponseDTO>>(emptyList())
     val solicitacoesList: StateFlow<List<SolicitacaoResponseDTO>> = _solicitacoesList.asStateFlow()
+
+    private val _solicitacoesLastUpdated = MutableStateFlow<String?>(null)
+    val solicitacoesLastUpdated: StateFlow<String?> = _solicitacoesLastUpdated.asStateFlow()
+
+    private val _solicitacoesPollingActive = MutableStateFlow(false)
+    val solicitacoesPollingActive: StateFlow<Boolean> = _solicitacoesPollingActive.asStateFlow()
+
+    private var solicitacoesPollingJob: Job? = null
 
     // Base URL & Demo Mode state
     val baseUrl: StateFlow<String> = repository.baseUrl
@@ -140,6 +151,7 @@ class AppViewModel : ViewModel() {
         loadClientes(reset = true)
         loadMaquinas(reset = true)
         loadDashboardMetrics()
+        startSolicitacoesPolling()
     }
 
     fun setSelectedTab(tab: Int) {
@@ -163,6 +175,7 @@ class AppViewModel : ViewModel() {
         loadClientes(reset = true)
         loadMaquinas(reset = true)
         loadDashboardMetrics()
+        startSolicitacoesPolling() // reinicia o polling com a nova config/URL
     }
 
     fun loadDashboardMetrics() {
@@ -192,12 +205,9 @@ class AppViewModel : ViewModel() {
                 _clientesForSelection.value = clients.filter { it.ativo == true || it.ativo == null }
                     .sortedByDescending { it.codCliente }
 
-                // Fetch real solicitacoes and open count from backend
-                val abCount = repository.getSolicitacoesAbertasCount()
-                _solicitacoesCount.value = abCount
-
-                val list = repository.getSolicitacoes()
-                _solicitacoesList.value = list
+                // Solicitações são atualizadas pelo polling automático (startSolicitacoesPolling)
+                // Força uma atualização imediata aqui também para o dashboard inicial
+                refreshSolicitacoes()
             } catch (e: Exception) {
                 Log.e("AppViewModel", "Failed to load dashboard metrics: ${e.message}")
             }
@@ -210,6 +220,50 @@ class AppViewModel : ViewModel() {
 
     fun clearNotification() {
         _appMessage.value = null
+    }
+
+    // --- SOLICITAÇÕES POLLING ---
+    private val solicitacoesFormatter = DateTimeFormatter.ofPattern("HH:mm:ss")
+
+    fun startSolicitacoesPolling(intervalSeconds: Long = 30) {
+        solicitacoesPollingJob?.cancel()
+        solicitacoesPollingJob = viewModelScope.launch {
+            _solicitacoesPollingActive.value = true
+            while (isActive) {
+                refreshSolicitacoes()
+                delay(intervalSeconds * 1000)
+            }
+        }
+    }
+
+    fun stopSolicitacoesPolling() {
+        solicitacoesPollingJob?.cancel()
+        solicitacoesPollingJob = null
+        _solicitacoesPollingActive.value = false
+    }
+
+    fun refreshSolicitacoesManual() {
+        viewModelScope.launch {
+            refreshSolicitacoes()
+        }
+    }
+
+    private suspend fun refreshSolicitacoes() {
+        try {
+            val count = repository.getSolicitacoesAbertasCount()
+            val list = repository.getSolicitacoes()
+            val previousCount = _solicitacoesCount.value
+            _solicitacoesCount.value = count
+            _solicitacoesList.value = list
+            _solicitacoesLastUpdated.value = LocalDateTime.now().format(solicitacoesFormatter)
+            // Notifica o usuário apenas quando aparecer uma nova solicitação em aberto
+            if (previousCount > 0 && count > previousCount) {
+                val novas = count - previousCount
+                showNotification("$novas nova(s) solicitação(ões) em aberto!")
+            }
+        } catch (e: Exception) {
+            Log.e("AppViewModel", "refreshSolicitacoes error: ${e.message}")
+        }
     }
 
     // --- CLIENTS DATA RETRIEVAL ---
@@ -501,7 +555,7 @@ class AppViewModel : ViewModel() {
                 val errorMsg = repository.createSolicitacao(dto)
                 if (errorMsg == null) {
                     showNotification("Nova solicitação aberta!")
-                    loadDashboardMetrics()
+                    refreshSolicitacoes() // atualiza contador e lista imediatamente
                 } else {
                     showNotification("Falha ao salvar: $errorMsg")
                 }
@@ -745,6 +799,101 @@ class AppViewModel : ViewModel() {
                 Log.e("AppViewModel", "desativarMaquina error: ${e.message}", e)
                 showNotification("Erro ao enviar para o back-end.")
                 onResult(false)
+            }
+        }
+    }
+
+    // --- EXECUÇÃO DE SOLICITAÇÃO ---
+
+    private val _categorias = MutableStateFlow<List<com.example.data.model.CategoriaDTO>>(emptyList())
+    val categorias: StateFlow<List<com.example.data.model.CategoriaDTO>> = _categorias.asStateFlow()
+
+    private val _pecasDisponiveis = MutableStateFlow<List<com.example.data.model.PecaDTO>>(emptyList())
+    val pecasDisponiveis: StateFlow<List<com.example.data.model.PecaDTO>> = _pecasDisponiveis.asStateFlow()
+
+    private val _pecasLoading = MutableStateFlow(false)
+    val pecasLoading: StateFlow<Boolean> = _pecasLoading.asStateFlow()
+
+    private val _execucaoLoading = MutableStateFlow(false)
+    val execucaoLoading: StateFlow<Boolean> = _execucaoLoading.asStateFlow()
+
+    fun loadCategorias() {
+        viewModelScope.launch {
+            try {
+                _categorias.value = repository.getCategorias()
+            } catch (e: Exception) {
+                Log.e("AppViewModel", "loadCategorias error: ${e.message}")
+            }
+        }
+    }
+
+    fun loadPecasDisponiveis(categoriaId: Long) {
+        viewModelScope.launch {
+            _pecasLoading.value = true
+            try {
+                _pecasDisponiveis.value = repository.getPecasDisponiveis(categoriaId)
+            } catch (e: Exception) {
+                Log.e("AppViewModel", "loadPecasDisponiveis error: ${e.message}")
+                _pecasDisponiveis.value = emptyList()
+            } finally {
+                _pecasLoading.value = false
+            }
+        }
+    }
+
+    fun clearPecasDisponiveis() {
+        _pecasDisponiveis.value = emptyList()
+    }
+
+    fun performRegistrarExecucao(
+        solicitacaoId: Long,
+        // Map de problemaId → Pair(descricao, listaDePecasIds)
+        execucoesPorProblema: Map<Long, Pair<String, List<Long>>>,
+        onResult: (Boolean) -> Unit
+    ) {
+        if (execucoesPorProblema.isEmpty()) {
+            showNotification("Nenhum problema para registrar.")
+            onResult(false)
+            return
+        }
+
+        val tecnico = _usuarioLogado.value?.nome
+            ?: _usuarioLogado.value?.username
+            ?: "Técnico"
+
+        val formatter = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")
+        val agora = java.time.LocalDateTime.now().format(formatter)
+
+        val lista = execucoesPorProblema.map { (problemaId, pair) ->
+            com.example.data.model.ExecucaoRequestDTO(
+                problemaId    = problemaId,
+                solicitacaoId = solicitacaoId,
+                dataExecucao  = agora,
+                tecnico       = tecnico,
+                descricao     = pair.first,
+                pecasUsadas   = pair.second
+            )
+        }
+
+        viewModelScope.launch {
+            _execucaoLoading.value = true
+            try {
+                val errorMsg = repository.registrarExecucao(lista)
+                if (errorMsg == null) {
+                    showNotification("Execução registrada! Notificação enviada ao Signal.")
+                    refreshSolicitacoes()   // atualiza contador/lista imediatamente
+                    loadExecucoes()
+                    onResult(true)
+                } else {
+                    showNotification("Falha ao registrar: $errorMsg")
+                    onResult(false)
+                }
+            } catch (e: Exception) {
+                Log.e("AppViewModel", "performRegistrarExecucao error: ${e.message}", e)
+                showNotification("Erro ao enviar para o back-end.")
+                onResult(false)
+            } finally {
+                _execucaoLoading.value = false
             }
         }
     }

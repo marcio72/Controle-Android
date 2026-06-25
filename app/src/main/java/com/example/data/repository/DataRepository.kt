@@ -758,8 +758,7 @@ class DataRepository {
         }
     }
 
-    suspend fun getExecucoes(): List<com.example.data.model.ExecucaoDTO> {
-        if (_isDemoMode.value) {
+    suspend fun getExecucoes(): List<com.example.data.model.ExecucaoDTO> {        if (_isDemoMode.value) {
             return listOf(
                 com.example.data.model.ExecucaoDTO(
                     id = 1L, nomeCliente = "Demo Cliente", nomeMaquina = "Demo Máquina",
@@ -773,6 +772,74 @@ class DataRepository {
             apiService?.getExecucoes() ?: emptyList()
         } catch (e: Exception) {
             Log.e("DataRepository", "getExecucoes failed: ${e.message}")
+            emptyList()
+        }
+    }
+
+    suspend fun registrarExecucao(
+        lista: List<com.example.data.model.ExecucaoRequestDTO>
+    ): String? {
+        if (_isDemoMode.value) {
+            // Demo: marca a solicitação como concluída localmente
+            lista.firstOrNull()?.solicitacaoId?.let { sid ->
+                val idx = localSolicitacoes.indexOfFirst { it.id == sid }
+                if (idx >= 0) {
+                    localSolicitacoes[idx] = localSolicitacoes[idx].copy(status = false)
+                }
+            }
+            return null
+        }
+
+        return try {
+            val response = apiService?.registrarExecucao(lista)
+            if (response != null && !response.isSuccessful) {
+                val body = response.errorBody()?.string() ?: ""
+                Log.e("DataRepository", "registrarExecucao HTTP ${response.code()}: $body")
+                "HTTP ${response.code()}: ${body.take(80)}"
+            } else {
+                null
+            }
+        } catch (e: retrofit2.HttpException) {
+            val body = e.response()?.errorBody()?.string() ?: ""
+            Log.e("DataRepository", "registrarExecucao HTTP ${e.code()}: $body")
+            "HTTP ${e.code()}: ${body.take(80)}"
+        } catch (e: Exception) {
+            Log.e("DataRepository", "registrarExecucao failed: ${e.message}")
+            e.message ?: "Erro desconhecido"
+        }
+    }
+
+    suspend fun getCategorias(): List<com.example.data.model.CategoriaDTO> {
+        if (_isDemoMode.value) {
+            return listOf(
+                com.example.data.model.CategoriaDTO(1L, "Placa Mãe", "pl"),
+                com.example.data.model.CategoriaDTO(2L, "Fonte", "fo"),
+                com.example.data.model.CategoriaDTO(3L, "Monitor", "mo")
+            )
+        }
+        return try {
+            apiService?.getCategorias() ?: emptyList()
+        } catch (e: Exception) {
+            Log.e("DataRepository", "getCategorias failed: ${e.message}")
+            emptyList()
+        }
+    }
+
+    suspend fun getPecasDisponiveis(categoriaId: Long): List<com.example.data.model.PecaDTO> {
+        if (_isDemoMode.value) {
+            return listOf(
+                com.example.data.model.PecaDTO(101L, "PL-0041", "ESTOQUE",
+                    com.example.data.model.CategoriaDTO(categoriaId, "Placa Mãe", "pl")),
+                com.example.data.model.PecaDTO(102L, "PL-0042", "ESTOQUE",
+                    com.example.data.model.CategoriaDTO(categoriaId, "Placa Mãe", "pl")),
+                com.example.data.model.PecaDTO(103L, "PL-0043", "ESTOQUE",
+                    com.example.data.model.CategoriaDTO(categoriaId, "Placa Mãe", "pl"))
+            )
+        }
+        return try {
+            apiService?.getPecasDisponiveis(categoriaId) ?: emptyList()
+        } catch (e: Exception) {
+            Log.e("DataRepository", "getPecasDisponiveis failed: ${e.message}")
             emptyList()
         }
     }
