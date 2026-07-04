@@ -25,6 +25,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalContext
 import com.example.data.model.CategoriaDTO
 import com.example.data.model.PecaDTO
 import com.example.data.model.SolicitacaoResponseDTO
@@ -53,8 +54,12 @@ fun ExecutarSolicitacaoScreen(
         }
     }
 
-    // Peças selecionadas (global para todos os problemas desta execução)
-    var pecasSelecionadas by remember { mutableStateOf(setOf<Long>()) }
+    // Peças: cada peça selecionada é atribuída a UM problema/máquina específico (idPeca -> idProblema)
+    val pecaAssignments = remember { androidx.compose.runtime.mutableStateMapOf<Long, Long>() }
+    // Cache de código/nome das peças já vistas, para não perder a referência ao trocar de categoria
+    val pecaInfoCache = remember { androidx.compose.runtime.mutableStateMapOf<Long, PecaDTO>() }
+    // idPeca atualmente mostrando o seletor de "qual máquina" (quando há mais de 1 problema)
+    var pecaEmSelecao by remember { mutableStateOf<Long?>(null) }
 
     // Seção de peças
     var usarPecas by remember { mutableStateOf(false) }
@@ -63,18 +68,54 @@ fun ExecutarSolicitacaoScreen(
 
     // Confirmação antes de enviar
     var showConfirmDialog by remember { mutableStateOf(false) }
+    val context = LocalContext.current
 
     // Carrega categorias ao entrar na tela
     LaunchedEffect(Unit) {
         viewModel.loadCategorias()
     }
 
-    // Carrega peças quando muda a categoria
+    // Mantém o cache de código/nome de peças mesmo depois de trocar de categoria
+    LaunchedEffect(pecasDisponiveis) {
+        pecasDisponiveis.forEach { p -> pecaInfoCache[p.idPeca] = p }
+    }
+
+    // Quando as atribuições de peça mudam, injeta/atualiza bloco de peças no campo "O que foi feito" de CADA problema
+    LaunchedEffect(pecaAssignments.toMap()) {
+        val problemas = solicitacao.problemas ?: return@LaunchedEffect
+        problemas.forEach { p ->
+            val id = p.idProblema ?: return@forEach
+            val textoAtual = descricoesPorProblema[id] ?: ""
+
+            // Remove bloco anterior de peças (tudo depois de "\n\nPeças utilizadas:")
+            val textoBase = if (textoAtual.contains("\n\nPeças utilizadas:")) {
+                textoAtual.substringBefore("\n\nPeças utilizadas:").trimEnd()
+            } else {
+                textoAtual.trimEnd()
+            }
+
+            // Adiciona novo bloco apenas com as peças atribuídas a ESTE problema
+            val idsDesteProblema = pecaAssignments.filterValues { it == id }.keys
+            val novoTexto = if (idsDesteProblema.isNotEmpty()) {
+                val codigos = idsDesteProblema
+                    .mapNotNull { pecaInfoCache[it]?.codigo }
+                    .joinToString(", ")
+                if (codigos.isNotBlank()) {
+                    "$textoBase\n\nPeças utilizadas: $codigos"
+                } else textoBase
+            } else {
+                textoBase
+            }
+
+            descricoesPorProblema[id] = novoTexto
+        }
+    }
+
+    // Carrega peças quando muda a categoria (mantém as atribuições já feitas em outras categorias)
     LaunchedEffect(categoriaSelecionada) {
         val cat = categoriaSelecionada
         if (cat != null) {
             viewModel.loadPecasDisponiveis(cat.id)
-            pecasSelecionadas = emptySet()
         } else {
             viewModel.clearPecasDisponiveis()
         }
@@ -112,8 +153,8 @@ fun ExecutarSolicitacaoScreen(
                         color = Color(0xFF94A3B8),
                         fontSize = 13.sp
                     )
-                    if (pecasSelecionadas.isNotEmpty()) {
-                        val qtdPecas = pecasSelecionadas.size
+                    if (pecaAssignments.isNotEmpty()) {
+                        val qtdPecas = pecaAssignments.size
                         Text(
                             "• $qtdPecas peça(s) serão baixadas do estoque",
                             color = Color(0xFF94A3B8),
@@ -140,12 +181,15 @@ fun ExecutarSolicitacaoScreen(
                         showConfirmDialog = false
                         val execucoesPorProblema = descricoesPorProblema
                             .filter { it.value.isNotBlank() }
-                            .mapValues { (_, desc) ->
-                                Pair<String, List<Long>>(desc, pecasSelecionadas.toList())
+                            .mapValues { (problemaId, desc) ->
+                                val pecasDoProblema = pecaAssignments.filterValues { it == problemaId }.keys.toList()
+                                Pair<String, List<Long>>(desc, pecasDoProblema)
                             }
                         viewModel.performRegistrarExecucao(
                             solicitacaoId = solicitacao.id ?: 0L,
                             execucoesPorProblema = execucoesPorProblema,
+                            nomeCliente = solicitacao.cliente ?: "",
+                            context = context,
                             onResult = { success ->
                                 if (success) onBack()
                             }
@@ -380,15 +424,29 @@ fun ExecutarSolicitacaoScreen(
                                 }
                             }
                             Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    problema.maquina?.substringBefore(" - ") ?: "Máquina",
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = Color.White
-                                )
-                                val jogo = problema.maquina?.substringAfter(" - ", "")
-                                if (!jogo.isNullOrBlank()) {
-                                    Text(jogo, fontSize = 11.sp, color = Color(0xFF64748B))
+                                val numMaq = problema.maquina?.substringBefore(" - ")?.trim()
+                                val nomJogo = problema.maquina?.substringAfter(" - ", "")?.trim()
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        "Máquina: ",
+                                        fontSize = 11.sp,
+                                        color = Color(0xFF64748B)
+                                    )
+                                    Text(
+                                        numMaq ?: "-",
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = BrandOrange,
+                                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                                    )
+                                }
+                                if (!nomJogo.isNullOrBlank()) {
+                                    Text(
+                                        nomJogo,
+                                        fontSize = 11.sp,
+                                        color = Color(0xFF64748B),
+                                        modifier = Modifier.padding(top = 1.dp)
+                                    )
                                 }
                             }
                         }
@@ -547,7 +605,8 @@ fun ExecutarSolicitacaoScreen(
                                 usarPecas = checked
                                 if (!checked) {
                                     categoriaSelecionada = null
-                                    pecasSelecionadas = emptySet()
+                                    pecaAssignments.clear()
+                                    pecaEmSelecao = null
                                 }
                             },
                             colors = SwitchDefaults.colors(
@@ -668,21 +727,69 @@ fun ExecutarSolicitacaoScreen(
                                 } else {
                                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                         pecasDisponiveis.forEach { peca ->
-                                            PecaItem(
-                                                peca = peca,
-                                                selecionada = pecasSelecionadas.contains(peca.idPeca),
-                                                onToggle = {
-                                                    pecasSelecionadas = if (pecasSelecionadas.contains(peca.idPeca)) {
-                                                        pecasSelecionadas - peca.idPeca
-                                                    } else {
-                                                        pecasSelecionadas + peca.idPeca
+                                            val assignedProblemaId = pecaAssignments[peca.idPeca]
+                                            val assignedLabel = assignedProblemaId?.let { pid ->
+                                                problemas.find { it.idProblema == pid }?.maquina
+                                            }
+                                            Column {
+                                                PecaItem(
+                                                    peca = peca,
+                                                    assignedLabel = assignedLabel,
+                                                    onToggle = {
+                                                        when {
+                                                            assignedProblemaId != null -> {
+                                                                // já atribuída a uma máquina -> remove
+                                                                pecaAssignments.remove(peca.idPeca)
+                                                                pecaEmSelecao = null
+                                                            }
+                                                            problemas.size <= 1 -> {
+                                                                // só existe 1 máquina nesta solicitação -> atribui direto
+                                                                problemas.firstOrNull()?.idProblema?.let {
+                                                                    pecaAssignments[peca.idPeca] = it
+                                                                }
+                                                            }
+                                                            else -> {
+                                                                // várias máquinas -> abre seletor de qual máquina usou a peça
+                                                                pecaEmSelecao = if (pecaEmSelecao == peca.idPeca) null else peca.idPeca
+                                                            }
+                                                        }
+                                                    }
+                                                )
+                                                if (pecaEmSelecao == peca.idPeca && problemas.size > 1) {
+                                                    Row(
+                                                        modifier = Modifier
+                                                            .fillMaxWidth()
+                                                            .padding(start = 30.dp, top = 2.dp, bottom = 6.dp),
+                                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                    ) {
+                                                        problemas.forEach { p ->
+                                                            val pid = p.idProblema
+                                                            if (pid != null) {
+                                                                val numMaq = p.maquina?.substringBefore(" - ")?.trim() ?: "?"
+                                                                AssistChip(
+                                                                    onClick = {
+                                                                        pecaAssignments[peca.idPeca] = pid
+                                                                        pecaEmSelecao = null
+                                                                    },
+                                                                    label = { Text("Maq. $numMaq", fontSize = 11.sp) },
+                                                                    colors = AssistChipDefaults.assistChipColors(
+                                                                        containerColor = Color(0xFF0F1623),
+                                                                        labelColor = Color(0xFF4ADE80)
+                                                                    ),
+                                                                    border = AssistChipDefaults.assistChipBorder(
+                                                                        enabled = true,
+                                                                        borderColor = Color(0xFF334155)
+                                                                    )
+                                                                )
+                                                            }
+                                                        }
                                                     }
                                                 }
-                                            )
+                                            }
                                         }
                                     }
 
-                                    if (pecasSelecionadas.isNotEmpty()) {
+                                    if (pecaAssignments.isNotEmpty()) {
                                         Row(
                                             modifier = Modifier
                                                 .fillMaxWidth()
@@ -699,11 +806,17 @@ fun ExecutarSolicitacaoScreen(
                                                 tint = Color(0xFF4ADE80),
                                                 modifier = Modifier.size(16.dp)
                                             )
-                                            val codigosSelecionados = pecasDisponiveis
-                                                .filter { pecasSelecionadas.contains(it.idPeca) }
-                                                .joinToString(", ") { it.codigo }
+                                            val resumo = problemas.mapNotNull { p ->
+                                                val pid = p.idProblema ?: return@mapNotNull null
+                                                val codigos = pecaAssignments.filterValues { it == pid }.keys
+                                                    .mapNotNull { id -> pecaInfoCache[id]?.codigo }
+                                                if (codigos.isEmpty()) null else {
+                                                    val numMaq = p.maquina?.substringBefore(" - ")?.trim() ?: "?"
+                                                    "Maq.$numMaq: ${codigos.joinToString(", ")}"
+                                                }
+                                            }.joinToString("  •  ")
                                             Text(
-                                                "${pecasSelecionadas.size} peça(s): $codigosSelecionados",
+                                                "${pecaAssignments.size} peça(s) — $resumo",
                                                 fontSize = 11.sp,
                                                 color = Color(0xFF4ADE80),
                                                 modifier = Modifier.weight(1f)
@@ -726,9 +839,10 @@ fun ExecutarSolicitacaoScreen(
 @Composable
 private fun PecaItem(
     peca: PecaDTO,
-    selecionada: Boolean,
+    assignedLabel: String?,
     onToggle: () -> Unit
 ) {
+    val selecionada = assignedLabel != null
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -770,12 +884,17 @@ private fun PecaItem(
                 fontFamily = FontFamily.Monospace
             )
             Text(
-                "${peca.categoria?.nome ?: ""}",
+                "${peca.categoriaNome ?: ""}",
                 fontSize = 10.sp,
                 color = Color(0xFF64748B)
             )
         }
 
+        val badgeText = if (assignedLabel != null) {
+            "Maq. ${assignedLabel.substringBefore(" - ").trim()}"
+        } else {
+            "estoque"
+        }
         Box(
             modifier = Modifier
                 .clip(RoundedCornerShape(5.dp))
@@ -783,7 +902,7 @@ private fun PecaItem(
                 .padding(horizontal = 7.dp, vertical = 3.dp)
         ) {
             Text(
-                "estoque",
+                badgeText,
                 fontSize = 10.sp,
                 color = Color(0xFF4ADE80)
             )

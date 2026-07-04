@@ -1,12 +1,15 @@
 package com.example
 
+import android.Manifest
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.*
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.ui.screens.DashboardScreen
 import com.example.ui.screens.LoginScreen
@@ -19,14 +22,32 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            // Read standard system preference, and allow instant dynamic manual visual toggle in emulator window
             val systemDark = isSystemInDarkTheme()
             var darkThemeManual by remember { mutableStateOf<Boolean?>(null) }
             val resolvedDarkTheme = darkThemeManual ?: systemDark
 
-            var currentScreen by remember { mutableStateOf("splash") }
+            var currentScreen by rememberSaveable { mutableStateOf("splash") }
             val viewModel: AppViewModel = viewModel()
             val isLoggedIn by viewModel.isLoggedIn.collectAsState()
+
+            // Pedido de permissão GPS em runtime
+            val locationPermissionLauncher = rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.RequestMultiplePermissions()
+            ) { permissions ->
+                // Resultado ignorado aqui — o LocationHelper verifica na hora do uso
+            }
+
+            // Pede a permissão assim que a tela principal for exibida
+            LaunchedEffect(isLoggedIn) {
+                if (isLoggedIn) {
+                    locationPermissionLauncher.launch(
+                        arrayOf(
+                            Manifest.permission.ACCESS_FINE_LOCATION,
+                            Manifest.permission.ACCESS_COARSE_LOCATION
+                        )
+                    )
+                }
+            }
 
             MyApplicationTheme(darkTheme = resolvedDarkTheme) {
                 if (currentScreen == "splash") {
@@ -54,9 +75,4 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
-}
-
-@androidx.compose.runtime.Composable
-fun Greeting(name: String, modifier: androidx.compose.ui.Modifier = androidx.compose.ui.Modifier) {
-    androidx.compose.material3.Text(text = "Hello $name!", modifier = modifier)
 }

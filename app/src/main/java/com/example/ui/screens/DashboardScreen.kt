@@ -74,11 +74,14 @@ fun DashboardScreen(
 
     var showConfigDialog by remember { mutableStateOf(false) }
     var screenSection by remember { mutableStateOf("hub") } // "hub", "clientes", "maquinas", "novo_cliente", "nova_maquina", "editar_cliente"
-    var hubTabIdx by remember { mutableStateOf(0) } // 0 = Início, 1 = Solicitações, 2 = Execuções, 3 = Relatórios, 4 = Perfil
+    var hubTabIdx by remember { mutableStateOf(0) } // 0 = Início, 1 = Solicitações, 2 = Execuções, 3 = Mais
+    var showMaisSheet by remember { mutableStateOf(false) }
     var clienteParaEditar by remember { mutableStateOf<Cliente?>(null) }
     var maquinaParaEditar by remember { mutableStateOf<Maquina?>(null) }
     var origemEdicaoMaquina by remember { mutableStateOf("clientes") }
     var solicitacaoParaExecutar by remember { mutableStateOf<com.example.data.model.SolicitacaoResponseDTO?>(null) }
+    var clienteParaHistorico by remember { mutableStateOf<Cliente?>(null) }
+    var maquinaParaHistorico by remember { mutableStateOf<Maquina?>(null) }
 
     // Display SnackBar / Toast cleanly when flow triggers notification
     LaunchedEffect(appMessage) {
@@ -127,6 +130,10 @@ fun DashboardScreen(
                             maquinaParaEditar = maquina
                             origemEdicaoMaquina = "clientes"
                             screenSection = "editar_maquina"
+                        },
+                        onVerHistorico = { cliente ->
+                            clienteParaHistorico = cliente
+                            screenSection = "historico_cliente"
                         }
                     )
                 }
@@ -194,6 +201,10 @@ fun DashboardScreen(
                             maquinaParaEditar = maquina
                             origemEdicaoMaquina = "maquinas"
                             screenSection = "editar_maquina"
+                        },
+                        onVerHistoricoMaquina = { maquina ->
+                            maquinaParaHistorico = maquina
+                            screenSection = "historico_maquina"
                         }
                     )
                 }
@@ -204,6 +215,30 @@ fun DashboardScreen(
                 viewModel = viewModel,
                 onBack = { screenSection = "maquinas" }
             )
+        }
+        "historico_maquina" -> {
+            maquinaParaHistorico?.let { maquina ->
+                HistoricoMaquinaScreen(
+                    viewModel = viewModel,
+                    maquina = maquina,
+                    onBack = {
+                        maquinaParaHistorico = null
+                        screenSection = "maquinas"
+                    }
+                )
+            } ?: run { screenSection = "maquinas" }
+        }
+        "historico_cliente" -> {
+            clienteParaHistorico?.let { cliente ->
+                HistoricoClienteScreen(
+                    viewModel = viewModel,
+                    cliente = cliente,
+                    onBack = {
+                        clienteParaHistorico = null
+                        screenSection = "clientes"
+                    }
+                )
+            } ?: run { screenSection = "clientes" }
         }
         "executar_solicitacao" -> {
             solicitacaoParaExecutar?.let { solicitacao ->
@@ -219,6 +254,18 @@ fun DashboardScreen(
             } ?: run {
                 screenSection = "hub"
             }
+        }
+        "estoque" -> {
+            EstoqueScreen(
+                viewModel = viewModel,
+                onBack = { screenSection = "hub" }
+            )
+        }
+        "log_envio" -> {
+            LogEnvioScreen(
+                viewModel = viewModel,
+                onBack = { screenSection = "hub" }
+            )
         }
         else -> {
             Scaffold(
@@ -297,15 +344,9 @@ fun DashboardScreen(
                         )
                         NavigationBarItem(
                             selected = hubTabIdx == 3,
-                            onClick = { hubTabIdx = 3 },
-                            icon = { Icon(Icons.Default.BarChart, contentDescription = "Relatórios") },
-                            label = { Text("Relatórios", fontSize = 11.sp) }
-                        )
-                        NavigationBarItem(
-                            selected = hubTabIdx == 4,
-                            onClick = { hubTabIdx = 4 },
-                            icon = { Icon(Icons.Default.Person, contentDescription = "Perfil") },
-                            label = { Text("Perfil", fontSize = 11.sp) }
+                            onClick = { showMaisSheet = true },
+                            icon = { Icon(Icons.Default.MoreHoriz, contentDescription = "Mais") },
+                            label = { Text("Mais", fontSize = 11.sp) }
                         )
                     }
                 },
@@ -316,6 +357,17 @@ fun DashboardScreen(
                         .padding(innerPadding)
                         .fillMaxSize()
                 ) {
+                    // Bottom Sheet "Mais"
+                    if (showMaisSheet) {
+                        MaisBottomSheet(
+                            onDismiss = { showMaisSheet = false },
+                            onRelatorio = { showMaisSheet = false; hubTabIdx = 10 },
+                            onEstoque   = { showMaisSheet = false; screenSection = "estoque" },
+                            onPerfil    = { showMaisSheet = false; hubTabIdx = 11 },
+                            onLogEnvio  = { showMaisSheet = false; screenSection = "log_envio" }
+                        )
+                    }
+
                     when (hubTabIdx) {
                         0 -> TabInicio(
                             viewModel = viewModel,
@@ -330,8 +382,8 @@ fun DashboardScreen(
                             }
                         )
                         2 -> TabExecucoesList(viewModel)
-                        3 -> TabIndicadores(viewModel = viewModel)
-                        4 -> TabPerfilTechnical(viewModel = viewModel)
+                        10 -> TabIndicadores(viewModel = viewModel)
+                        11 -> TabPerfilTechnical(viewModel = viewModel)
                     }
                 }
             }
@@ -354,7 +406,7 @@ fun DashboardScreen(
 }
 
 @Composable
-fun TabClientes(viewModel: AppViewModel, onEditCliente: (Cliente) -> Unit = {}, onEditMaquina: (Maquina) -> Unit = {}) {
+fun TabClientes(viewModel: AppViewModel, onEditCliente: (Cliente) -> Unit = {}, onEditMaquina: (Maquina) -> Unit = {}, onVerHistorico: (Cliente) -> Unit = {}) {
     val context = LocalContext.current
     val clientes by viewModel.clientes.collectAsState()
     val loading by viewModel.clientesLoading.collectAsState()
@@ -518,7 +570,7 @@ fun TabClientes(viewModel: AppViewModel, onEditCliente: (Cliente) -> Unit = {}, 
                     modifier = Modifier.testTag("clientes_list")
                 ) {
                     itemsIndexed(clientes) { index, cliente ->
-                        ClienteCard(cliente = cliente, viewModel = viewModel, context = context, onEdit = onEditCliente, onEditMaquina = onEditMaquina)
+                        ClienteCard(cliente = cliente, viewModel = viewModel, context = context, onEdit = onEditCliente, onEditMaquina = onEditMaquina, onVerHistorico = onVerHistorico)
                     }
 
                     // Infinite pagination loading indicator
@@ -694,7 +746,7 @@ fun FilterBadge(label: String, onRemove: () -> Unit) {
 }
 
 @Composable
-fun ClienteCard(cliente: Cliente, viewModel: AppViewModel, context: Context, onEdit: (Cliente) -> Unit = {}, onEditMaquina: (Maquina) -> Unit = {}) {
+fun ClienteCard(cliente: Cliente, viewModel: AppViewModel, context: Context, onEdit: (Cliente) -> Unit = {}, onEditMaquina: (Maquina) -> Unit = {}, onVerHistorico: (Cliente) -> Unit = {}) {
     var expanded by remember { mutableStateOf(false) }
     val active = cliente.ativo == true
     val statusColor = if (active) SecondaryEmerald else AccentAmber
@@ -1132,7 +1184,13 @@ fun ClienteCard(cliente: Cliente, viewModel: AppViewModel, context: Context, onE
 
                         Spacer(modifier = Modifier.height(8.dp))
 
-                        val clientMaquinas = cliente.maquinas?.filter { !it.isExcluded() } ?: emptyList()
+                        val clientMaquinas = (cliente.maquinas?.filter { !it.isExcluded() } ?: emptyList())
+                            .sortedWith(
+                                compareBy(
+                                    { (it.nom_jogo ?: "").lowercase() },
+                                    { naturalSortKey(it.nom_maq) }
+                                )
+                            )
                         if (clientMaquinas.isEmpty()) {
                             Box(
                                 modifier = Modifier
@@ -1233,6 +1291,29 @@ fun ClienteCard(cliente: Cliente, viewModel: AppViewModel, context: Context, onE
                                     }
                                 }
                             }
+                        }
+
+                        // Botão Histórico de Serviços
+                        Spacer(modifier = Modifier.height(12.dp))
+                        OutlinedButton(
+                            onClick = { onVerHistorico(cliente) },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(8.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, PrimaryBlue.copy(alpha = 0.5f))
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.History,
+                                contentDescription = null,
+                                tint = PrimaryBlue,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                "Histórico de serviços",
+                                color = PrimaryBlue,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium
+                            )
                         }
                     }
                 }
@@ -1888,7 +1969,7 @@ fun EditarMaquinaScreen(viewModel: AppViewModel, maquina: Maquina, onBack: () ->
 }
 
 @Composable
-fun TabMaquinas(viewModel: AppViewModel, onEditMaquina: (Maquina) -> Unit) {
+fun TabMaquinas(viewModel: AppViewModel, onEditMaquina: (Maquina) -> Unit, onVerHistoricoMaquina: (Maquina) -> Unit = {}) {
     val context = LocalContext.current
     val maquinas by viewModel.maquinas.collectAsState()
     val filteredMaquinas = maquinas.filter { !it.isExcluded() }
@@ -2041,7 +2122,8 @@ fun TabMaquinas(viewModel: AppViewModel, onEditMaquina: (Maquina) -> Unit) {
                         MaquinaRowCard(
                             maquina = maquina,
                             viewModel = viewModel,
-                            onEditMaquina = onEditMaquina
+                            onEditMaquina = onEditMaquina,
+                            onVerHistorico = onVerHistoricoMaquina
                         )
                     }
 
@@ -2320,7 +2402,8 @@ fun NovaMaquinaScreen(viewModel: AppViewModel, onBack: () -> Unit) {
 fun MaquinaRowCard(
     maquina: Maquina,
     viewModel: AppViewModel,
-    onEditMaquina: (Maquina) -> Unit
+    onEditMaquina: (Maquina) -> Unit,
+    onVerHistorico: (Maquina) -> Unit = {}
 ) {
     var expanded by remember { mutableStateOf(false) }
     val owner = remember(maquina.codCliente) { viewModel.repository.getClientForMachine(maquina.codCliente) }
@@ -2401,22 +2484,22 @@ fun MaquinaRowCard(
                             Text(
                                 text = "ID: ${maquina.id}",
                                 style = MaterialTheme.typography.labelSmall.copy(
+                                    fontWeight = FontWeight.Medium,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                                ),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Placa: ${maquina.numeroPlaca ?: "S/ placa"}",
+                                style = MaterialTheme.typography.labelSmall.copy(
                                     fontWeight = FontWeight.Bold,
                                     color = SecondaryEmerald
                                 ),
                                 modifier = Modifier
                                     .background(SecondaryEmerald.copy(alpha = 0.08f), RoundedCornerShape(4.dp))
                                     .padding(horizontal = 6.dp, vertical = 2.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "CPU: ${maquina.numeroPlaca ?: "S/ placa"}",
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                                    fontWeight = FontWeight.Medium
-                                ),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
                             )
                         }
                         Spacer(modifier = Modifier.height(2.dp))
@@ -2649,6 +2732,21 @@ fun MaquinaRowCard(
                                     )
                                 }
                             }
+                        }
+
+                        // Botão Histórico
+                        Spacer(modifier = Modifier.height(10.dp))
+                        OutlinedButton(
+                            onClick = { onVerHistorico(maquina) },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(8.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, BrandOrange.copy(alpha = 0.5f))
+                        ) {
+                            Icon(Icons.Default.History, contentDescription = null,
+                                tint = BrandOrange, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Histórico de serviços", color = BrandOrange,
+                                fontSize = 13.sp, fontWeight = FontWeight.Medium)
                         }
                     }
                 }
@@ -3256,8 +3354,8 @@ fun TabInicio(
         NewSolicitacaoDialog(
             viewModel = viewModel,
             onDismiss = { showNewSolicitacaoDialog = false },
-            onSubmit = { clienteId, maquinaId, maquinaName, desc ->
-                viewModel.performCreateSolicitacao(clienteId, maquinaId, maquinaName, desc)
+            onSubmit = { clienteId, problemas ->
+                viewModel.performCreateSolicitacao(clienteId, problemas)
                 showNewSolicitacaoDialog = false
             }
         )
@@ -3384,21 +3482,26 @@ fun QuickAccessGridCard(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+data class ProblemaEntrada(
+    val maquinaId: String,
+    val maquinaLabel: String,
+    val descricao: String
+)
+
 @Composable
 fun NewSolicitacaoDialog(
     viewModel: AppViewModel,
     onDismiss: () -> Unit,
-    onSubmit: (Long, String, String, String) -> Unit
+    onSubmit: (Long, List<ProblemaEntrada>) -> Unit
 ) {
     val clientes by viewModel.clientesForSelection.collectAsState()
 
-    var maquina by remember { mutableStateOf("") }
     var desc by remember { mutableStateOf("") }
     var selectedCliente by remember { mutableStateOf<com.example.data.model.Cliente?>(null) }
     var expandedDropdown by remember { mutableStateOf(false) }
     var selectedMaquina by remember { mutableStateOf<com.example.data.model.Maquina?>(null) }
     var expandedMaquinaDropdown by remember { mutableStateOf(false) }
+    val problemasAdicionados = remember { mutableStateListOf<ProblemaEntrada>() }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -3412,7 +3515,7 @@ fun NewSolicitacaoDialog(
                 .drawBehind {
                     val glowColor = BrandOrange
                     val radius = 16.dp.toPx()
-                    
+
                     // Outer super soft and wide atmospheric glow (huge diffusion)
                     drawRoundRect(
                         color = glowColor.copy(alpha = 0.03f),
@@ -3453,11 +3556,12 @@ fun NewSolicitacaoDialog(
                 border = BorderStroke(1.dp, BrandOrange.copy(alpha = 0.35f)),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(min = 480.dp)
+                    .heightIn(min = 480.dp, max = 640.dp)
             ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
                     .padding(24.dp),
                 verticalArrangement = Arrangement.spacedBy(20.dp)
             ) {
@@ -3521,7 +3625,8 @@ fun NewSolicitacaoDialog(
                                                 selectedCliente = client
                                                 expandedDropdown = false
                                                 selectedMaquina = null
-                                                maquina = ""
+                                                desc = ""
+                                                problemasAdicionados.clear()
                                             }
                                             .padding(12.dp)
                                     ) {
@@ -3540,8 +3645,14 @@ fun NewSolicitacaoDialog(
 
                 // Machine Selector Dropdown (visible only after a client is selected)
                 if (selectedCliente != null) {
-                    val clientMaquinas = selectedCliente?.maquinas?.filter { !it.isExcluded() } ?: emptyList()
-                    
+                    val clientMaquinas = (selectedCliente?.maquinas?.filter { !it.isExcluded() } ?: emptyList())
+                        .sortedWith(
+                            compareBy(
+                                { (it.nom_jogo ?: "").lowercase() },
+                                { naturalSortKey(it.nom_maq) }
+                            )
+                        )
+
                     Column {
                         Text("Selecione a Máquina", color = Color(0xFF94A3B8), fontSize = 12.sp)
                         Spacer(modifier = Modifier.height(4.dp))
@@ -3591,25 +3702,36 @@ fun NewSolicitacaoDialog(
                                 LazyColumn(modifier = Modifier.fillMaxWidth()) {
                                     items(clientMaquinas) { maq ->
                                         val isSelected = maq.id == selectedMaquina?.id
+                                        val jaAdicionada = problemasAdicionados.any { it.maquinaId == (maq.id?.toString() ?: "") }
                                         Box(
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .background(if (isSelected) TerminalSelectedBg else Color.Transparent)
                                                 .clickable {
                                                     selectedMaquina = maq
-                                                    maquina = "${maq.nom_maq ?: ""} (${maq.nom_jogo ?: ""}) - Placa: ${maq.numeroPlaca ?: "S/N"}"
                                                     expandedMaquinaDropdown = false
                                                 }
                                                 .padding(12.dp)
                                         ) {
                                             Column {
-                                                Text(
-                                                    text = maq.nom_maq ?: "sem nome",
-                                                    color = if (isSelected) TerminalGreenBright else TerminalGreen,
-                                                    fontFamily = FontFamily.Monospace,
-                                                    fontSize = 13.sp,
-                                                    fontWeight = FontWeight.Bold
-                                                )
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Text(
+                                                        text = maq.nom_maq ?: "sem nome",
+                                                        color = if (isSelected) TerminalGreenBright else TerminalGreen,
+                                                        fontFamily = FontFamily.Monospace,
+                                                        fontSize = 13.sp,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                    if (jaAdicionada) {
+                                                        Spacer(modifier = Modifier.width(6.dp))
+                                                        Text(
+                                                            text = "(adicionada)",
+                                                            color = BrandOrange,
+                                                            fontFamily = FontFamily.Monospace,
+                                                            fontSize = 10.sp
+                                                        )
+                                                    }
+                                                }
                                                 Text(
                                                     text = "jogo: ${maq.nom_jogo ?: "s/d"} - placa: ${maq.numeroPlaca ?: "s/n"}",
                                                     color = TerminalHint,
@@ -3623,41 +3745,120 @@ fun NewSolicitacaoDialog(
                             }
                         }
                     }
+
+                    // Problem Description Input (para a máquina selecionada no dropdown acima)
+                    Column {
+                        Text("Descrição do problema desta máquina", color = Color(0xFF94A3B8), fontSize = 12.sp)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        OutlinedTextField(
+                            value = desc,
+                            onValueChange = { desc = it },
+                            placeholder = {
+                                Text(
+                                    "descreva o problema...",
+                                    color = TerminalHint,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            },
+                            minLines = 3,
+                            textStyle = androidx.compose.ui.text.TextStyle(
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 14.sp
+                            ),
+                            shape = RoundedCornerShape(6.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = TerminalGreenBright,
+                                unfocusedTextColor = TerminalGreen,
+                                focusedContainerColor = TerminalBackground,
+                                unfocusedContainerColor = TerminalBackground,
+                                focusedBorderColor = TerminalBorder,
+                                unfocusedBorderColor = TerminalBorder,
+                                cursorColor = TerminalGreenBright
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 90.dp)
+                        )
+                    }
+
+                    // Botão Adicionar Máquina à lista da solicitação
+                    Button(
+                        onClick = {
+                            val maq = selectedMaquina
+                            val idStr = maq?.id?.toString() ?: ""
+                            if (maq != null && desc.isNotBlank() && problemasAdicionados.none { it.maquinaId == idStr }) {
+                                val label = "${maq.nom_maq ?: ""} - ${maq.nom_jogo ?: ""}"
+                                problemasAdicionados.add(ProblemaEntrada(idStr, label, desc.trim()))
+                                selectedMaquina = null
+                                desc = ""
+                            }
+                        },
+                        enabled = selectedMaquina != null && desc.isNotBlank() &&
+                            problemasAdicionados.none { it.maquinaId == (selectedMaquina?.id?.toString() ?: "") },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Adicionar Máquina", color = Color.White)
+                    }
                 }
 
-                // Problem Description Input
-                Column {
-                    Text("Descrição detalhada do Problema", color = Color(0xFF94A3B8), fontSize = 12.sp)
-                    Spacer(modifier = Modifier.height(4.dp))
-                    OutlinedTextField(
-                        value = desc,
-                        onValueChange = { desc = it },
-                        placeholder = {
-                            Text(
-                                "descreva o problema...",
-                                color = TerminalHint,
-                                fontFamily = FontFamily.Monospace
-                            )
-                        },
-                        minLines = 5,
-                        textStyle = androidx.compose.ui.text.TextStyle(
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 14.sp
-                        ),
-                        shape = RoundedCornerShape(6.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = TerminalGreenBright,
-                            unfocusedTextColor = TerminalGreen,
-                            focusedContainerColor = TerminalBackground,
-                            unfocusedContainerColor = TerminalBackground,
-                            focusedBorderColor = TerminalBorder,
-                            unfocusedBorderColor = TerminalBorder,
-                            cursorColor = TerminalGreenBright
-                        ),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 140.dp)
-                    )
+                // Lista de máquinas/problemas já adicionados a esta solicitação
+                if (problemasAdicionados.isNotEmpty()) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            text = "Máquinas nesta solicitação (${problemasAdicionados.size})",
+                            color = Color(0xFF94A3B8),
+                            fontSize = 12.sp
+                        )
+                        problemasAdicionados.forEach { item ->
+                            Card(
+                                shape = RoundedCornerShape(8.dp),
+                                colors = CardDefaults.cardColors(containerColor = TerminalBackground),
+                                border = BorderStroke(1.dp, TerminalBorder),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(12.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = item.maquinaLabel,
+                                            color = TerminalGreenBright,
+                                            fontFamily = FontFamily.Monospace,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Text(
+                                            text = item.descricao,
+                                            color = TerminalHint,
+                                            fontFamily = FontFamily.Monospace,
+                                            fontSize = 12.sp,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                    IconButton(onClick = { problemasAdicionados.remove(item) }) {
+                                        Icon(
+                                            imageVector = Icons.Default.Close,
+                                            contentDescription = "Remover",
+                                            tint = Color(0xFFEF4444)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
 
                 Row(
@@ -3671,15 +3872,17 @@ fun NewSolicitacaoDialog(
                     Button(
                         onClick = {
                             val cid: Long = selectedCliente?.codCliente ?: 0L
-                            val maqIdStr = selectedMaquina?.id?.toString() ?: ""
-                            if (cid != 0L && selectedMaquina != null && maquina.isNotBlank() && desc.isNotBlank()) {
-                                onSubmit(cid, maqIdStr, maquina, desc)
+                            if (cid != 0L && problemasAdicionados.isNotEmpty()) {
+                                onSubmit(cid, problemasAdicionados.toList())
                             }
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = BrandOrange),
-                        enabled = selectedCliente != null && selectedMaquina != null && maquina.isNotBlank() && desc.isNotBlank()
+                        enabled = selectedCliente != null && problemasAdicionados.isNotEmpty()
                     ) {
-                        Text("Enviar", color = Color.White)
+                        Text(
+                            if (problemasAdicionados.size > 1) "Enviar (${problemasAdicionados.size})" else "Enviar",
+                            color = Color.White
+                        )
                     }
                 }
             }
@@ -4253,5 +4456,134 @@ fun ProfileLineItem(title: String, valStr: String) {
     ) {
         Text(title, color = Color(0xFF64748B), fontSize = 13.sp)
         Text(valStr, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+    }
+}
+
+// ─────────────────────────────────────────────────────────────
+// BOTTOM SHEET: MAIS
+// ─────────────────────────────────────────────────────────────
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun MaisBottomSheet(
+    onDismiss: () -> Unit,
+    onRelatorio: () -> Unit,
+    onEstoque: () -> Unit,
+    onPerfil: () -> Unit,
+    onLogEnvio: () -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = com.example.ui.theme.SleekNavyCard,
+        dragHandle = {
+            androidx.compose.foundation.layout.Box(
+                modifier = androidx.compose.ui.Modifier
+                    .padding(vertical = 12.dp)
+                    .size(width = 40.dp, height = 4.dp)
+                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(2.dp))
+                    .background(androidx.compose.ui.graphics.Color(0xFF334155))
+            )
+        }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 24.dp, end = 24.dp, bottom = 40.dp)
+        ) {
+            Text(
+                text = "Menu",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = androidx.compose.ui.graphics.Color.White,
+                modifier = Modifier.padding(bottom = 20.dp)
+            )
+
+            MaisSheetItem(
+                icon = Icons.Default.BarChart,
+                iconColor = androidx.compose.ui.graphics.Color(0xFF38BDF8),
+                title = "Relatórios",
+                subtitle = "Visualizar relatórios de execução",
+                onClick = onRelatorio
+            )
+            HorizontalDivider(color = androidx.compose.ui.graphics.Color(0xFF1E293B), modifier = Modifier.padding(vertical = 4.dp))
+            MaisSheetItem(
+                icon = Icons.Default.Inventory,
+                iconColor = androidx.compose.ui.graphics.Color(0xFF22C55E),
+                title = "Estoque",
+                subtitle = "Categorias e lotes de peças",
+                onClick = onEstoque
+            )
+            HorizontalDivider(color = androidx.compose.ui.graphics.Color(0xFF1E293B), modifier = Modifier.padding(vertical = 4.dp))
+            MaisSheetItem(
+                icon = Icons.Default.History,
+                iconColor = androidx.compose.ui.graphics.Color(0xFFA855F7),
+                title = "Log de Envios",
+                subtitle = "Histórico de logs de envio de chamados",
+                onClick = onLogEnvio
+            )
+            HorizontalDivider(color = androidx.compose.ui.graphics.Color(0xFF1E293B), modifier = Modifier.padding(vertical = 4.dp))
+            MaisSheetItem(
+                icon = Icons.Default.Person,
+                iconColor = com.example.ui.theme.BrandOrange,
+                title = "Perfil",
+                subtitle = "Dados do técnico e configurações",
+                onClick = onPerfil
+            )
+        }
+    }
+}
+
+@Composable
+fun MaisSheetItem(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    iconColor: androidx.compose.ui.graphics.Color,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+            .padding(vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(46.dp)
+                .clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+                .background(iconColor.copy(alpha = 0.12f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(imageVector = icon, contentDescription = null, tint = iconColor, modifier = Modifier.size(24.dp))
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, color = androidx.compose.ui.graphics.Color.White)
+            Text(subtitle, fontSize = 12.sp, color = androidx.compose.ui.graphics.Color(0xFF64748B))
+        }
+        Icon(
+            Icons.Default.ChevronRight,
+            contentDescription = null,
+            tint = androidx.compose.ui.graphics.Color(0xFF334155),
+            modifier = Modifier.size(20.dp)
+        )
+    }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Ordenação "natural" para números de máquina (evita "10" antes de "2").
+// Divide a string em blocos de dígitos e não-dígitos; blocos numéricos
+// são preenchidos com zeros à esquerda para comparação correta como texto.
+// ─────────────────────────────────────────────────────────────
+private fun naturalSortKey(value: String?): String {
+    val raw = value?.trim().orEmpty()
+    if (raw.isEmpty()) return ""
+    val regex = Regex("\\d+|\\D+")
+    return regex.findAll(raw).joinToString("") { match ->
+        val part = match.value
+        if (part.first().isDigit()) part.padStart(12, '0') else part.lowercase()
     }
 }

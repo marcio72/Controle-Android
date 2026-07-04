@@ -45,7 +45,8 @@ interface SpringApiService {
         @Query("search") search: String? = null,
         @Query("regiao") regiao: Int? = null,
         @Query("ativo") ativo: Boolean? = null,
-        @Query("bairro") bairro: String? = null
+        @Query("bairro") bairro: String? = null,
+        @Query("leiturista") leiturista: Int? = null
     ): List<Cliente>
 
     @GET("api/clientes/page")
@@ -136,4 +137,27 @@ interface SpringApiService {
 
     @GET("api/categorias")
     suspend fun getCategorias(): List<com.example.data.model.CategoriaDTO>
+
+    // --- LOTES ---
+    @GET("api/lotes")
+    suspend fun getLotes(): List<com.example.data.model.LoteDTO>
+
+    @GET("api/lotes/{id}/pecas")
+    suspend fun getPecasDoLote(@Path("id") id: Long): List<com.example.data.model.PecaDTO>
+
+    @POST("api/lotes")
+    suspend fun criarLote(@Body lote: com.example.data.model.LoteRequestDTO): retrofit2.Response<com.example.data.model.LoteDTO>
+
+    // --- CATEGORIAS (criar) ---
+    @POST("api/categorias")
+    suspend fun criarCategoria(@Body cat: com.example.data.model.CriarCategoriaRequest): retrofit2.Response<com.example.data.model.CategoriaDTO>
+
+
+    // --- LOG DE ENVIO ---
+    @POST("api/log-envio")
+    suspend fun salvarLogEnvio(@Body log: com.example.data.model.LogEnvioRequestDTO): retrofit2.Response<com.example.data.model.LogEnvioDTO>
+
+    @GET("api/log-envio")
+    suspend fun listarLogEnvios(): List<com.example.data.model.LogEnvioDTO>
+
 }

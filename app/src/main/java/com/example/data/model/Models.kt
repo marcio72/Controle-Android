@@ -151,10 +151,21 @@ data class CategoriaDTO(
 
 @JsonClass(generateAdapter = true)
 data class PecaDTO(
-    @Json(name = "idPeca")   val idPeca: Long,
-    @Json(name = "codigo")   val codigo: String,
-    @Json(name = "status")   val status: String?,
-    @Json(name = "categoria") val categoria: CategoriaDTO?
+    @Json(name = "idPeca")        val idPeca: Long,
+    @Json(name = "codigo")        val codigo: String,
+    @Json(name = "status")        val status: String?,
+    @Json(name = "dataInstalacao") val dataInstalacao: String? = null,
+    @Json(name = "dataRetirada")  val dataRetirada: String? = null,
+    @Json(name = "observacao")    val observacao: String? = null,
+    @Json(name = "categoriaId")   val categoriaId: Long? = null,
+    @Json(name = "categoriaNome") val categoriaNome: String? = null,
+    @Json(name = "categoriaAlias") val categoriaAlias: String? = null,
+    @Json(name = "clienteId")     val clienteId: Long? = null,
+    @Json(name = "clienteNome")   val clienteNome: String? = null,
+    @Json(name = "maquinaId")     val maquinaId: Long? = null,
+    @Json(name = "maquinaNome")   val maquinaNome: String? = null,
+    @Json(name = "maquinaJogo")   val maquinaJogo: String? = null,
+    @Json(name = "maquinaPlaca")  val maquinaPlaca: String? = null
 )
 
 @JsonClass(generateAdapter = true)
@@ -171,3 +182,53 @@ data class ExecucaoDTO(
     @Json(name = "pdfGerado") val pdfGerado: Boolean? = null
 )
 
+
+@JsonClass(generateAdapter = true)
+data class LoteDTO(
+    @Json(name = "idLote") val idLote: Long,
+    @Json(name = "alias") val alias: String?,
+    @Json(name = "fornecedor") val fornecedor: String?,
+    @Json(name = "codigo") val codigo: String?,
+    @Json(name = "descricao") val descricao: String?,
+    @Json(name = "quantidadeComprada") val quantidadeComprada: Int,
+    @Json(name = "quantidadeAtual") val quantidadeAtual: Int,
+    @Json(name = "dataEntrada") val dataEntrada: String?,
+    @Json(name = "categoria") val categoria: CategoriaDTO?
+)
+
+@JsonClass(generateAdapter = true)
+data class LoteRequestDTO(
+    @Json(name = "categoriaId") val categoriaId: Long,
+    @Json(name = "alias") val alias: String,
+    @Json(name = "fornecedor") val fornecedor: String?,
+    @Json(name = "codigo") val codigo: String?,
+    @Json(name = "descricao") val descricao: String?,
+    @Json(name = "quantidadeComprada") val quantidadeComprada: Int,
+    @Json(name = "numeroInicial") val numeroInicial: Int,
+    @Json(name = "dataEntrada") val dataEntrada: String?
+)
+
+@JsonClass(generateAdapter = true)
+data class CriarCategoriaRequest(
+    @Json(name = "nome") val nome: String,
+    @Json(name = "alias") val alias: String
+)
+
+@JsonClass(generateAdapter = true)
+data class LogEnvioDTO(
+    @Json(name = "id")           val id: Long,
+    @Json(name = "numeroEnvio")  val numeroEnvio: Long,
+    @Json(name = "dataEnvio")    val dataEnvio: String?,
+    @Json(name = "nomeCliente")  val nomeCliente: String?,
+    @Json(name = "tecnico")      val tecnico: String?,
+    @Json(name = "localizacao")  val localizacao: String?
+)
+
+@JsonClass(generateAdapter = true)
+data class LogEnvioRequestDTO(
+    @Json(name = "numeroEnvio")  val numeroEnvio: Long,
+    @Json(name = "dataEnvio")    val dataEnvio: String,
+    @Json(name = "nomeCliente")  val nomeCliente: String?,
+    @Json(name = "tecnico")      val tecnico: String?,
+    @Json(name = "localizacao")  val localizacao: String?
+)

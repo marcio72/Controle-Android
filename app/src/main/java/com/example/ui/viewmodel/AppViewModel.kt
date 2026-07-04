@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import android.widget.Toast
 import androidx.lifecycle.ViewModel
+import com.example.util.LocationHelper
 import androidx.lifecycle.viewModelScope
 import com.example.data.model.Cliente
 import com.example.data.model.Maquina
@@ -187,14 +188,16 @@ class AppViewModel : ViewModel() {
                     search = null,
                     regiao = null,
                     ativo = null,
-                    bairro = null
+                    bairro = null,
+                    leiturista = _usuarioLogado.value?.leiturista
                 )
                 val machines = repository.getMaquinas(
                     page = 0,
                     size = 1000,
                     search = null,
                     ativo = null,
-                    codCliente = null
+                    codCliente = null,
+                    leiturista = _usuarioLogado.value?.leiturista
                 )
                 val filteredMachines = machines.filter { !it.isExcluded() }
 
@@ -312,7 +315,8 @@ class AppViewModel : ViewModel() {
                     search = _clientSearchQuery.value,
                     regiao = _clientFilterRegiao.value,
                     ativo = _clientFilterAtivo.value,
-                    bairro = _clientFilterBairro.value
+                    bairro = _clientFilterBairro.value,
+                    leiturista = _usuarioLogado.value?.leiturista
                 )
 
                 if (results.isEmpty()) {
@@ -381,7 +385,8 @@ class AppViewModel : ViewModel() {
                     size = pageSize,
                     search = _machineSearchQuery.value,
                     ativo = _machineFilterAtivo.value,
-                    codCliente = _machineFilterCodCliente.value
+                    codCliente = _machineFilterCodCliente.value,
+                    leiturista = _usuarioLogado.value?.leiturista
                 )
 
                 if (results.isEmpty()) {
@@ -418,7 +423,8 @@ class AppViewModel : ViewModel() {
                 search = if (_clientSearchQuery.value.isNotEmpty()) _clientSearchQuery.value else null,
                 regiao = _clientFilterRegiao.value,
                 ativo = _clientFilterAtivo.value,
-                bairro = _clientFilterBairro.value
+                bairro = _clientFilterBairro.value,
+                leiturista = _usuarioLogado.value?.leiturista
             )
             
             if (fullList.isEmpty()) {
@@ -455,7 +461,8 @@ class AppViewModel : ViewModel() {
                 size = 1000,
                 search = if (_machineSearchQuery.value.isNotEmpty()) _machineSearchQuery.value else null,
                 ativo = _machineFilterAtivo.value,
-                codCliente = _machineFilterCodCliente.value
+                codCliente = _machineFilterCodCliente.value,
+                leiturista = _usuarioLogado.value?.leiturista
             )
 
             if (fullList.isEmpty()) {
@@ -513,13 +520,13 @@ class AppViewModel : ViewModel() {
         showNotification("Sessão encerrada.")
     }
 
-    fun performCreateSolicitacao(clienteId: Long?, maquinaId: String, maquinaName: String, descricao: String) {
+    fun performCreateSolicitacao(clienteId: Long?, itens: List<com.example.ui.screens.ProblemaEntrada>) {
         if (clienteId == null) {
             showNotification("Selecione um cliente para abrir a solicitação.")
             return
         }
-        if (maquinaName.isBlank() || descricao.isBlank()) {
-            showNotification("Preencha todos os campos da máquina e do problema.")
+        if (itens.isEmpty()) {
+            showNotification("Adicione ao menos uma máquina com o problema descrito.")
             return
         }
 
@@ -530,31 +537,34 @@ class AppViewModel : ViewModel() {
                 val formatter = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm")
                 val currentDateTimeString = currentDateTime.format(formatter)
 
-                // For the backend, send the machine ID; for offline/demo mode, send the full machine name
-                val maquinaValue = if (repository.isDemoMode.value) maquinaName else maquinaId
+                val problemasDto = itens.map { item ->
+                    // For the backend, send the machine ID; for offline/demo mode, send the full machine name
+                    val maquinaValue = if (repository.isDemoMode.value) item.maquinaLabel else item.maquinaId
 
-                // numeroMaquina precisa ser um Long válido existente no banco do backend.
-                // O valor -1 é usado pela tela como placeholder de "Chamado Geral / Sem Equipamento"
-                // e não existe no banco, então não deve ser enviado como numeroMaquina.
-                val numeroMaquinaLong = maquinaId.toLongOrNull()?.takeIf { it > 0 }
+                    // numeroMaquina precisa ser um Long válido existente no banco do backend.
+                    // O valor -1 é usado pela tela como placeholder de "Chamado Geral / Sem Equipamento"
+                    // e não existe no banco, então não deve ser enviado como numeroMaquina.
+                    val numeroMaquinaLong = item.maquinaId.toLongOrNull()?.takeIf { it > 0 }
 
-                val prob = com.example.data.model.ProblemaDTO(
-                    idProblema = null,
-                    numeroMaquina = numeroMaquinaLong,
-                    maquina = maquinaValue,
-                    descricao = descricao
-                )
+                    com.example.data.model.ProblemaDTO(
+                        idProblema = null,
+                        numeroMaquina = numeroMaquinaLong,
+                        maquina = maquinaValue,
+                        descricao = item.descricao
+                    )
+                }
 
                 val dto = com.example.data.model.SolicitacaoDTO(
                     cliente = clienteId,
                     dataSolicitacao = currentDateTimeString,
-                    problemas = listOf(prob),
+                    problemas = problemasDto,
                     nomeTecnico = _usuarioLogado.value?.nome ?: _usuarioLogado.value?.username ?: "Técnico"
                 )
 
                 val errorMsg = repository.createSolicitacao(dto)
                 if (errorMsg == null) {
-                    showNotification("Nova solicitação aberta!")
+                    val msg = if (itens.size > 1) "Solicitação aberta com ${itens.size} máquinas!" else "Nova solicitação aberta!"
+                    showNotification(msg)
                     refreshSolicitacoes() // atualiza contador e lista imediatamente
                 } else {
                     showNotification("Falha ao salvar: $errorMsg")
@@ -841,14 +851,111 @@ class AppViewModel : ViewModel() {
         }
     }
 
+
+    // --- LOTES & CATEGORIAS ---
+    private val _lotes = MutableStateFlow<List<com.example.data.model.LoteDTO>>(emptyList())
+    val lotes: StateFlow<List<com.example.data.model.LoteDTO>> = _lotes.asStateFlow()
+
+    private val _lotesLoading = MutableStateFlow(false)
+    val lotesLoading: StateFlow<Boolean> = _lotesLoading.asStateFlow()
+
+    private val _categoriasLoading = MutableStateFlow(false)
+    val categoriasLoading: StateFlow<Boolean> = _categoriasLoading.asStateFlow()
+
+    private val _pecasDoLote = MutableStateFlow<Map<Long, List<com.example.data.model.PecaDTO>>>(emptyMap())
+    val pecasDoLote: StateFlow<Map<Long, List<com.example.data.model.PecaDTO>>> = _pecasDoLote.asStateFlow()
+
+    private val _pecasDoLoteLoading = MutableStateFlow(false)
+    val pecasDoLoteLoading: StateFlow<Boolean> = _pecasDoLoteLoading.asStateFlow()
+
+    fun loadLotes() {
+        viewModelScope.launch {
+            _lotesLoading.value = true
+            try {
+                _lotes.value = repository.getLotes()
+            } catch (e: Exception) {
+                Log.e("AppViewModel", "loadLotes error: ${e.message}")
+            } finally {
+                _lotesLoading.value = false
+            }
+        }
+    }
+
+    fun loadPecasDoLote(loteId: Long) {
+        if (_pecasDoLote.value.containsKey(loteId)) return
+        viewModelScope.launch {
+            _pecasDoLoteLoading.value = true
+            try {
+                val pecas = repository.getPecasDoLote(loteId)
+                _pecasDoLote.value = _pecasDoLote.value + (loteId to pecas)
+            } catch (e: Exception) {
+                Log.e("AppViewModel", "loadPecasDoLote error: ${e.message}")
+            } finally {
+                _pecasDoLoteLoading.value = false
+            }
+        }
+    }
+
+    fun criarLote(
+        categoriaId: Long,
+        alias: String,
+        fornecedor: String?,
+        codigo: String?,
+        descricao: String?,
+        quantidadeComprada: Int,
+        numeroInicial: Int,
+        dataEntrada: String?,
+        onResult: (Boolean) -> Unit
+    ) {
+        viewModelScope.launch {
+            val request = com.example.data.model.LoteRequestDTO(
+                categoriaId = categoriaId,
+                alias = alias,
+                fornecedor = fornecedor,
+                codigo = codigo,
+                descricao = descricao,
+                quantidadeComprada = quantidadeComprada,
+                numeroInicial = numeroInicial,
+                dataEntrada = dataEntrada
+            )
+            val resultado = repository.criarLote(request)
+            if (resultado != null) {
+                showNotification("Lote criado com sucesso!")
+                _pecasDoLote.value = emptyMap()
+                loadLotes()
+                onResult(true)
+            } else {
+                showNotification("Erro ao criar lote.")
+                onResult(false)
+            }
+        }
+    }
+
+    fun criarCategoria(nome: String, alias: String, onResult: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            _categoriasLoading.value = true
+            val resultado = repository.criarCategoria(nome, alias)
+            _categoriasLoading.value = false
+            if (resultado != null) {
+                showNotification("Categoria criada!")
+                loadCategorias()
+                onResult(true)
+            } else {
+                showNotification("Erro ao criar categoria.")
+                onResult(false)
+            }
+        }
+    }
+
     fun clearPecasDisponiveis() {
         _pecasDisponiveis.value = emptyList()
     }
 
     fun performRegistrarExecucao(
         solicitacaoId: Long,
-        // Map de problemaId → Pair(descricao, listaDePecasIds)
         execucoesPorProblema: Map<Long, Pair<String, List<Long>>>,
+        nomeCliente: String? = null,
+        context: Context? = null,
         onResult: (Boolean) -> Unit
     ) {
         if (execucoesPorProblema.isEmpty()) {
@@ -861,8 +968,8 @@ class AppViewModel : ViewModel() {
             ?: _usuarioLogado.value?.username
             ?: "Técnico"
 
-        val formatter = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")
-        val agora = java.time.LocalDateTime.now().format(formatter)
+        val formatter = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.getDefault())
+        val agora = formatter.format(java.util.Date())
 
         val lista = execucoesPorProblema.map { (problemaId, pair) ->
             com.example.data.model.ExecucaoRequestDTO(
@@ -878,10 +985,30 @@ class AppViewModel : ViewModel() {
         viewModelScope.launch {
             _execucaoLoading.value = true
             try {
+                // 1. Capturar localização GPS
+                val localizacao = context?.let {
+                    try { LocationHelper.getLocalizacaoAtual(it) } catch (e: Exception) { null }
+                }
+
+                // 2. Registrar execução
                 val errorMsg = repository.registrarExecucao(lista)
                 if (errorMsg == null) {
+                    // 3. Salvar log de envio
+                    try {
+                        val logRequest = com.example.data.model.LogEnvioRequestDTO(
+                            numeroEnvio = solicitacaoId,
+                            dataEnvio   = agora,
+                            nomeCliente = nomeCliente,
+                            tecnico     = tecnico,
+                            localizacao = localizacao
+                        )
+                        repository.salvarLogEnvio(logRequest)
+                    } catch (e: Exception) {
+                        Log.e("AppViewModel", "salvarLogEnvio error: ${e.message}")
+                    }
+
                     showNotification("Execução registrada! Notificação enviada ao Signal.")
-                    refreshSolicitacoes()   // atualiza contador/lista imediatamente
+                    refreshSolicitacoes()
                     loadExecucoes()
                     onResult(true)
                 } else {
@@ -894,6 +1021,26 @@ class AppViewModel : ViewModel() {
                 onResult(false)
             } finally {
                 _execucaoLoading.value = false
+            }
+        }
+    }
+
+    // --- LOG DE ENVIOS ---
+    private val _logEnvios = MutableStateFlow<List<com.example.data.model.LogEnvioDTO>>(emptyList())
+    val logEnvios: StateFlow<List<com.example.data.model.LogEnvioDTO>> = _logEnvios.asStateFlow()
+
+    private val _logEnviosLoading = MutableStateFlow(false)
+    val logEnviosLoading: StateFlow<Boolean> = _logEnviosLoading.asStateFlow()
+
+    fun loadLogEnvios() {
+        viewModelScope.launch {
+            _logEnviosLoading.value = true
+            try {
+                _logEnvios.value = repository.listarLogEnvios()
+            } catch (e: Exception) {
+                Log.e("AppViewModel", "loadLogEnvios error: ${e.message}")
+            } finally {
+                _logEnviosLoading.value = false
             }
         }
     }

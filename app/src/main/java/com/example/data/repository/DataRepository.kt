@@ -169,14 +169,30 @@ class DataRepository {
     }
 
     // Paginated, filtered, searched Client retrievals
+    // Regra de visibilidade por leiturista (mesma regra aplicada no backend):
+    //  - null ou 0 -> sem filtro (admin vê todos os clientes)
+    //  - 1         -> vê os clientes dos leituristas 1, 4 e 10 (grupo geral)
+    //  - 4         -> vê SOMENTE os próprios clientes
+    //  - demais    -> vê os próprios clientes + grupo 10 (regra padrão)
+    private fun leituristaAllowedList(userLeiturista: Int?): List<Int>? {
+        if (userLeiturista == null || userLeiturista == 0 || userLeiturista == 10) return null
+        return when (userLeiturista) {
+            1 -> listOf(1, 4)
+            else -> listOf(userLeiturista)
+        }
+    }
+
     suspend fun getClientes(
         page: Int,
         size: Int,
         search: String?,
         regiao: Int?,
         ativo: Boolean?,
-        bairro: String? = null
+        bairro: String? = null,
+        leiturista: Int? = null
     ): List<Cliente> {
+        val allowedLeituristas = leituristaAllowedList(leiturista)
+
         if (_isDemoMode.value) {
             var filtered = mockClientes.asSequence().filter { !it.isExcluded() }
             
@@ -197,6 +213,9 @@ class DataRepository {
             if (!bairro.isNullOrBlank()) {
                 filtered = filtered.filter { it.bairro?.equals(bairro, ignoreCase = true) == true }
             }
+            if (allowedLeituristas != null) {
+                filtered = filtered.filter { allowedLeituristas.contains(it.leiturista) }
+            }
 
             // Paginate
             val list = filtered.toList()
@@ -213,7 +232,7 @@ class DataRepository {
                     resp?.content
                 } catch (e: Exception) {
                     null
-                } ?: apiService?.getClientes(page, size, search, regiao, ativo, bairro) ?: emptyList()
+                } ?: apiService?.getClientes(page, size, search, regiao, ativo, bairro, leiturista) ?: emptyList()
 
                 // Fetch machine details for each client since Spring API might not populate the relationship out of the box
                 val apiList = rawApiList.map { apiCli ->
@@ -283,6 +302,9 @@ class DataRepository {
                 if (!bairro.isNullOrBlank()) {
                     filtered = filtered.filter { it.bairro?.equals(bairro, ignoreCase = true) == true }
                 }
+                if (allowedLeituristas != null) {
+                    filtered = filtered.filter { allowedLeituristas.contains(it.leiturista) }
+                }
 
                 val list = filtered.toList()
                 val startIdx = page * size
@@ -294,7 +316,7 @@ class DataRepository {
                 }
             } catch (e: Exception) {
                 Log.e("DataRepository", "Error getting live clients: ${e.message}. Falling back to cached data.")
-                getClientesDemoFallback(page, size, search, regiao, ativo, bairro)
+                getClientesDemoFallback(page, size, search, regiao, ativo, bairro, leiturista)
             }
         }
     }
@@ -305,8 +327,10 @@ class DataRepository {
         search: String?,
         regiao: Int?,
         ativo: Boolean?,
-        bairro: String?
+        bairro: String?,
+        leiturista: Int? = null
     ): List<Cliente> {
+        val allowedLeituristas = leituristaAllowedList(leiturista)
         var filtered = mockClientes.asSequence().filter { !it.isExcluded() }
         if (!search.isNullOrBlank()) {
             filtered = filtered.filter {
@@ -317,6 +341,7 @@ class DataRepository {
         if (regiao != null) filtered = filtered.filter { it.regiao == regiao }
         if (ativo != null) filtered = filtered.filter { it.ativo == ativo }
         if (!bairro.isNullOrBlank()) filtered = filtered.filter { it.bairro == bairro }
+        if (allowedLeituristas != null) filtered = filtered.filter { allowedLeituristas.contains(it.leiturista) }
 
         val list = filtered.toList()
         val startIdx = page * size
@@ -330,8 +355,11 @@ class DataRepository {
         size: Int,
         search: String?,
         ativo: Boolean?,
-        codCliente: Int? = null
+        codCliente: Int? = null,
+        leiturista: Int? = null
     ): List<Maquina> {
+        val allowedLeituristas = leituristaAllowedList(leiturista)
+
         if (_isDemoMode.value) {
             var filtered = mockMaquinas.asSequence().filter { !it.isExcluded() && !isClientExcluded(it.codCliente) }
 
@@ -348,6 +376,12 @@ class DataRepository {
             }
             if (codCliente != null) {
                 filtered = filtered.filter { it.codCliente == codCliente }
+            }
+            if (allowedLeituristas != null) {
+                filtered = filtered.filter { m ->
+                    val cli = mockClientes.find { it.codCliente?.toInt() == m.codCliente }
+                    allowedLeituristas.contains(cli?.leiturista)
+                }
             }
 
             val list = filtered.toList()
@@ -391,7 +425,7 @@ class DataRepository {
                     // To be absolutely certain we have all machines and association with clients,
                     // we query all active clients and fetch their respective machines.
                     try {
-                        val activeClients = apiService?.getClientes(0, 500, null, null, null, null) ?: emptyList()
+                        val activeClients = apiService?.getClientes(0, 500, null, null, null, null, leiturista) ?: emptyList()
                         activeClients.forEach { cli ->
                             val cod = cli.codCliente
                             if (cod != null) {
@@ -418,7 +452,7 @@ class DataRepository {
             } catch (e: Exception) {
                 Log.e("DataRepository", "Critical error in getMaquinas live fetch: ${e.message}")
             }
-            return getMaquinasDemoFallback(page, size, search, ativo, codCliente)
+            return getMaquinasDemoFallback(page, size, search, ativo, codCliente, leiturista)
         }
     }
 
@@ -427,8 +461,10 @@ class DataRepository {
         size: Int,
         search: String?,
         ativo: Boolean?,
-        codCliente: Int?
+        codCliente: Int?,
+        leiturista: Int? = null
     ): List<Maquina> {
+        val allowedLeituristas = leituristaAllowedList(leiturista)
         var filtered = mockMaquinas.asSequence().filter { !it.isExcluded() && !isClientExcluded(it.codCliente) }
         if (!search.isNullOrBlank()) {
             filtered = filtered.filter {
@@ -438,6 +474,12 @@ class DataRepository {
         }
         if (ativo != null) filtered = filtered.filter { it.ativo == ativo }
         if (codCliente != null) filtered = filtered.filter { it.codCliente == codCliente }
+        if (allowedLeituristas != null) {
+            filtered = filtered.filter { m ->
+                val cli = mockClientes.find { it.codCliente?.toInt() == m.codCliente }
+                allowedLeituristas.contains(cli?.leiturista)
+            }
+        }
 
         val list = filtered.toList()
         val startIdx = page * size
@@ -828,18 +870,104 @@ class DataRepository {
     suspend fun getPecasDisponiveis(categoriaId: Long): List<com.example.data.model.PecaDTO> {
         if (_isDemoMode.value) {
             return listOf(
-                com.example.data.model.PecaDTO(101L, "PL-0041", "ESTOQUE",
-                    com.example.data.model.CategoriaDTO(categoriaId, "Placa Mãe", "pl")),
-                com.example.data.model.PecaDTO(102L, "PL-0042", "ESTOQUE",
-                    com.example.data.model.CategoriaDTO(categoriaId, "Placa Mãe", "pl")),
-                com.example.data.model.PecaDTO(103L, "PL-0043", "ESTOQUE",
-                    com.example.data.model.CategoriaDTO(categoriaId, "Placa Mãe", "pl"))
+                com.example.data.model.PecaDTO(
+                    idPeca = 101L,
+                    codigo = "PL-0041",
+                    status = "ESTOQUE",
+                    categoriaId = categoriaId,
+                    categoriaNome = "Placa Mãe",
+                    categoriaAlias = "pl"
+                ),
+                com.example.data.model.PecaDTO(
+                    idPeca = 102L,
+                    codigo = "PL-0042",
+                    status = "ESTOQUE",
+                    categoriaId = categoriaId,
+                    categoriaNome = "Placa Mãe",
+                    categoriaAlias = "pl"
+                ),
+                com.example.data.model.PecaDTO(
+                    idPeca = 103L,
+                    codigo = "PL-0043",
+                    status = "ESTOQUE",
+                    categoriaId = categoriaId,
+                    categoriaNome = "Placa Mãe",
+                    categoriaAlias = "pl"
+                )
             )
         }
         return try {
             apiService?.getPecasDisponiveis(categoriaId) ?: emptyList()
         } catch (e: Exception) {
             Log.e("DataRepository", "getPecasDisponiveis failed: ${e.message}")
+            emptyList()
+        }
+    }
+
+
+    suspend fun getLotes(): List<com.example.data.model.LoteDTO> {
+        if (_isDemoMode.value) {
+            return listOf(
+                com.example.data.model.LoteDTO(1L, "PL", "Fornecedor Demo", "L001", "Lote demo placas", 10, 7, "2026-06-01",
+                    com.example.data.model.CategoriaDTO(1L, "Placa Mae", "pl")),
+                com.example.data.model.LoteDTO(2L, "FO", "Fornecedor Demo", "L002", "Lote demo fontes", 5, 5, "2026-06-10",
+                    com.example.data.model.CategoriaDTO(2L, "Fonte", "fo"))
+            )
+        }
+        return try {
+            apiService?.getLotes() ?: emptyList()
+        } catch (e: Exception) {
+            Log.e("DataRepository", "getLotes failed: ${e.message}")
+            emptyList()
+        }
+    }
+
+    suspend fun getPecasDoLote(loteId: Long): List<com.example.data.model.PecaDTO> {
+        return try {
+            apiService?.getPecasDoLote(loteId) ?: emptyList()
+        } catch (e: Exception) {
+            Log.e("DataRepository", "getPecasDoLote failed: ${e.message}")
+            emptyList()
+        }
+    }
+
+    suspend fun criarLote(request: com.example.data.model.LoteRequestDTO): com.example.data.model.LoteDTO? {
+        return try {
+            val response = apiService?.criarLote(request)
+            if (response?.isSuccessful == true) response.body() else null
+        } catch (e: Exception) {
+            Log.e("DataRepository", "criarLote failed: ${e.message}")
+            null
+        }
+    }
+
+    suspend fun criarCategoria(nome: String, alias: String): com.example.data.model.CategoriaDTO? {
+        return try {
+            val request = com.example.data.model.CriarCategoriaRequest(nome = nome, alias = alias)
+            val response = apiService?.criarCategoria(request)
+            if (response?.isSuccessful == true) response.body() else null
+        } catch (e: Exception) {
+            Log.e("DataRepository", "criarCategoria failed: ${e.message}")
+            null
+        }
+    }
+
+
+    suspend fun salvarLogEnvio(request: com.example.data.model.LogEnvioRequestDTO): Boolean {
+        return try {
+            val response = apiService?.salvarLogEnvio(request)
+            response?.isSuccessful == true
+        } catch (e: Exception) {
+            Log.e("DataRepository", "salvarLogEnvio failed: ${e.message}")
+            false
+        }
+    }
+
+    suspend fun listarLogEnvios(): List<com.example.data.model.LogEnvioDTO> {
+        return try {
+            apiService?.listarLogEnvios() ?: emptyList()
+        } catch (e: Exception) {
+            Log.e("DataRepository", "listarLogEnvios failed: ${e.message}")
             emptyList()
         }
     }
