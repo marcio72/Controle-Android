@@ -639,6 +639,43 @@ class DataRepository {
         }
     }
 
+    /**
+     * Troca a senha do usuário mediante confirmação da senha atual.
+     * Retorna Pair(sucesso, mensagem) — a mensagem vem do backend, pra mostrar
+     * tanto em caso de sucesso quanto de erro.
+     */
+    suspend fun trocarSenha(username: String, senhaAtual: String, senhaNova: String): Pair<Boolean, String> {
+        if (_isDemoMode.value) {
+            return true to "Senha alterada com sucesso. (modo demo)"
+        }
+
+        return try {
+            val body = com.example.data.model.TrocarSenhaRequestDTO(username, senhaAtual, senhaNova)
+            val response = apiService?.trocarSenha(body)
+
+            if (response != null && response.isSuccessful) {
+                true to (response.body()?.message ?: "Senha alterada com sucesso.")
+            } else {
+                val errorBody = response?.errorBody()?.string()
+                val msg = try {
+                    errorBody?.let {
+                        Moshi.Builder()
+                            .addLast(KotlinJsonAdapterFactory())
+                            .build()
+                            .adapter(com.example.data.model.TrocarSenhaResponseDTO::class.java)
+                            .fromJson(it)?.message
+                    } ?: "Não foi possível trocar a senha."
+                } catch (e: Exception) {
+                    "Não foi possível trocar a senha."
+                }
+                false to msg
+            }
+        } catch (e: Exception) {
+            Log.e("DataRepository", "trocarSenha failed: ${e.message}")
+            false to (e.message ?: "Erro inesperado ao trocar a senha.")
+        }
+    }
+
     suspend fun createCliente(cliente: com.example.data.model.Cliente): String? {
         if (_isDemoMode.value) {
             val newCliente = cliente.copy(
@@ -867,8 +904,70 @@ class DataRepository {
         }
     }
 
+    suspend fun getSubCategorias(categoriaId: Long?): List<com.example.data.model.SubCategoriaDTO> {
+        if (_isDemoMode.value) {
+            if (categoriaId != 3L) return emptyList()
+            return listOf(
+                com.example.data.model.SubCategoriaDTO(1L, "15 Pol."),
+                com.example.data.model.SubCategoriaDTO(2L, "17 Pol."),
+                com.example.data.model.SubCategoriaDTO(3L, "18 Pol."),
+                com.example.data.model.SubCategoriaDTO(4L, "19 Pol."),
+                com.example.data.model.SubCategoriaDTO(5L, "Outros")
+            )
+        }
+        return try {
+            apiService?.getSubCategorias(categoriaId) ?: emptyList()
+        } catch (e: Exception) {
+            Log.e("DataRepository", "getSubCategorias failed: ${e.message}")
+            emptyList()
+        }
+    }
+
+    suspend fun criarSubCategoria(nome: String, categoriaId: Long): com.example.data.model.SubCategoriaDTO? {
+        return try {
+            val request = com.example.data.model.CriarSubCategoriaRequest(
+                nome = nome,
+                categoria = com.example.data.model.CategoriaRefDTO(id = categoriaId)
+            )
+            val response = apiService?.criarSubCategoria(request)
+            if (response?.isSuccessful == true) response.body() else null
+        } catch (e: Exception) {
+            Log.e("DataRepository", "criarSubCategoria failed: ${e.message}")
+            null
+        }
+    }
+
     suspend fun getPecasDisponiveis(categoriaId: Long): List<com.example.data.model.PecaDTO> {
         if (_isDemoMode.value) {
+            // Demo com subcategorias (Monitor) pra conferir o agrupamento na tela de execução
+            if (categoriaId == 3L) {
+                val subs = listOf(
+                    Pair(1L, "15 Pol."),
+                    Pair(2L, "17 Pol."),
+                    Pair(3L, "18 Pol."),
+                    Pair(4L, "19 Pol.")
+                )
+                val demoMonitores = mutableListOf<com.example.data.model.PecaDTO>()
+                var seq = 0
+                subs.forEach { sub ->
+                    repeat(2) {
+                        seq += 1
+                        demoMonitores.add(
+                            com.example.data.model.PecaDTO(
+                                idPeca = 300L + seq,
+                                codigo = "MO-000$seq",
+                                status = "ESTOQUE",
+                                categoriaId = categoriaId,
+                                categoriaNome = "Monitor",
+                                categoriaAlias = "mo",
+                                subCategoriaId = sub.first,
+                                subCategoriaNome = sub.second
+                            )
+                        )
+                    }
+                }
+                return demoMonitores
+            }
             return listOf(
                 com.example.data.model.PecaDTO(
                     idPeca = 101L,
@@ -931,6 +1030,57 @@ class DataRepository {
         }
     }
 
+    suspend fun getFaixaPecasDoLote(loteId: Long): Pair<String?, String?> {
+        return try {
+            val resultado = apiService?.getFaixaPecasDoLote(loteId)
+            Pair(resultado?.get("primeiro"), resultado?.get("ultimo"))
+        } catch (e: Exception) {
+            Log.e("DataRepository", "getFaixaPecasDoLote failed: ${e.message}")
+            Pair(null, null)
+        }
+    }
+
+    suspend fun getJogos(): List<com.example.data.model.JogoDTO> {
+        return try {
+            apiService?.getJogos() ?: emptyList()
+        } catch (e: Exception) {
+            Log.e("DataRepository", "getJogos failed: ${e.message}")
+            emptyList()
+        }
+    }
+
+    suspend fun criarLoteManual(request: com.example.data.model.LoteManualRequestDTO): com.example.data.model.LoteDTO? {
+        return try {
+            val response = apiService?.criarLoteManual(request)
+            if (response?.isSuccessful == true) response.body() else null
+        } catch (e: Exception) {
+            Log.e("DataRepository", "criarLoteManual failed: ${e.message}")
+            null
+        }
+    }
+
+    suspend fun retirarPeca(idPeca: Long, observacao: String?, usuarioResponsavel: String?): Boolean {
+        return try {
+            val request = com.example.data.model.PecaAcaoRequestDTO(observacao, usuarioResponsavel)
+            val response = apiService?.retirarPeca(idPeca, request)
+            response?.isSuccessful == true
+        } catch (e: Exception) {
+            Log.e("DataRepository", "retirarPeca failed: ${e.message}")
+            false
+        }
+    }
+
+    suspend fun descartarPeca(idPeca: Long, observacao: String?, usuarioResponsavel: String?): Boolean {
+        return try {
+            val request = com.example.data.model.PecaAcaoRequestDTO(observacao, usuarioResponsavel)
+            val response = apiService?.descartarPeca(idPeca, request)
+            response?.isSuccessful == true
+        } catch (e: Exception) {
+            Log.e("DataRepository", "descartarPeca failed: ${e.message}")
+            false
+        }
+    }
+
     suspend fun criarLote(request: com.example.data.model.LoteRequestDTO): com.example.data.model.LoteDTO? {
         return try {
             val response = apiService?.criarLote(request)
@@ -972,6 +1122,160 @@ class DataRepository {
         }
     }
 
+    // ---------- CONTROLE DE CHAVES ----------
+
+    suspend fun getChaves(
+        numero: String?,
+        fornecedorId: Long?,
+        tipo: String?,
+        ativo: Boolean?
+    ): List<com.example.data.model.ChaveDTO> {
+        return try {
+            apiService?.getChaves(
+                numero = numero?.trim()?.ifBlank { null },
+                fornecedorId = fornecedorId,
+                tipo = tipo,
+                ativo = ativo
+            ) ?: emptyList()
+        } catch (e: Exception) {
+            Log.e("DataRepository", "getChaves failed: ${e.message}")
+            emptyList()
+        }
+    }
+
+    suspend fun getFornecedoresChave(): List<com.example.data.model.FornecedorChaveDTO> {
+        return try {
+            apiService?.getFornecedoresChave() ?: emptyList()
+        } catch (e: Exception) {
+            Log.e("DataRepository", "getFornecedoresChave failed: ${e.message}")
+            emptyList()
+        }
+    }
+
+    /** id nulo = cadastro novo; id preenchido = edição. */
+    suspend fun salvarChave(
+        id: Long?,
+        request: com.example.data.model.ChaveRequestDTO
+    ): com.example.data.model.ResultadoChave {
+        return try {
+            val response = if (id == null) {
+                apiService?.criarChave(request)
+            } else {
+                apiService?.atualizarChave(id, request)
+            }
+            if (response?.isSuccessful == true) {
+                com.example.data.model.ResultadoChave(chave = response.body())
+            } else {
+                com.example.data.model.ResultadoChave(erro = extrairErroChave(response))
+            }
+        } catch (e: Exception) {
+            Log.e("DataRepository", "salvarChave failed: ${e.message}")
+            com.example.data.model.ResultadoChave(erro = "Sem conexão com o servidor.")
+        }
+    }
+
+    suspend fun alterarAtivoChave(id: Long, valor: Boolean): com.example.data.model.ResultadoChave {
+        return try {
+            val response = apiService?.alterarAtivoChave(id, valor)
+            if (response?.isSuccessful == true) {
+                com.example.data.model.ResultadoChave(chave = response.body())
+            } else {
+                com.example.data.model.ResultadoChave(erro = extrairErroChave(response))
+            }
+        } catch (e: Exception) {
+            Log.e("DataRepository", "alterarAtivoChave failed: ${e.message}")
+            com.example.data.model.ResultadoChave(erro = "Sem conexão com o servidor.")
+        }
+    }
+
+    suspend fun criarFornecedorChave(nome: String): com.example.data.model.ResultadoChave {
+        return try {
+            val response = apiService?.criarFornecedorChave(
+                com.example.data.model.CriarFornecedorChaveRequest(nome.trim())
+            )
+            if (response?.isSuccessful == true) {
+                com.example.data.model.ResultadoChave(fornecedor = response.body())
+            } else {
+                com.example.data.model.ResultadoChave(erro = extrairErroChave(response))
+            }
+        } catch (e: Exception) {
+            Log.e("DataRepository", "criarFornecedorChave failed: ${e.message}")
+            com.example.data.model.ResultadoChave(erro = "Sem conexão com o servidor.")
+        }
+    }
+
+    // ---------- VÍNCULO CHAVE ↔ MÁQUINA ----------
+
+    /** null = falhou (sem conexão / erro); lista vazia = chave sem máquina. */
+    suspend fun getMaquinasDaChave(chaveId: Long, historico: Boolean): List<com.example.data.model.VinculoChaveDTO>? {
+        return try {
+            apiService?.getMaquinasDaChave(chaveId, historico)
+        } catch (e: Exception) {
+            Log.e("DataRepository", "getMaquinasDaChave failed: ${e.message}")
+            null
+        }
+    }
+
+    /** Pair(lista, erro). Erro vem do backend quando falta o número. */
+    suspend fun buscarMaquinasPorNumero(
+        numero: String,
+        praca: String?
+    ): Pair<List<com.example.data.model.MaquinaOpcaoDTO>, String?> {
+        return try {
+            val response = apiService?.buscarMaquinasPorNumero(numero.trim(), praca?.ifBlank { null })
+            if (response?.isSuccessful == true) {
+                Pair(response.body() ?: emptyList(), null)
+            } else {
+                Pair(emptyList(), extrairErroChave(response))
+            }
+        } catch (e: Exception) {
+            Log.e("DataRepository", "buscarMaquinasPorNumero failed: ${e.message}")
+            Pair(emptyList(), "Sem conexão com o servidor.")
+        }
+    }
+
+    suspend fun getPracasChave(): List<String> {
+        return try {
+            apiService?.getPracasChave() ?: emptyList()
+        } catch (e: Exception) {
+            Log.e("DataRepository", "getPracasChave failed: ${e.message}")
+            emptyList()
+        }
+    }
+
+    suspend fun vincularChave(
+        maquinaId: Long,
+        request: com.example.data.model.VinculoChaveRequestDTO
+    ): com.example.data.model.ResultadoVinculo {
+        return try {
+            val response = apiService?.vincularChave(maquinaId, request)
+            if (response?.isSuccessful == true) {
+                com.example.data.model.ResultadoVinculo(vinculo = response.body())
+            } else {
+                com.example.data.model.ResultadoVinculo(erro = extrairErroChave(response))
+            }
+        } catch (e: Exception) {
+            Log.e("DataRepository", "vincularChave failed: ${e.message}")
+            com.example.data.model.ResultadoVinculo(erro = "Sem conexão com o servidor.")
+        }
+    }
+
+    suspend fun encerrarVinculoChave(id: Long, observacao: String?): com.example.data.model.ResultadoVinculo {
+        return try {
+            val response = apiService?.encerrarVinculoChave(
+                id, com.example.data.model.EncerrarVinculoRequest(observacao?.trim()?.ifBlank { null })
+            )
+            if (response?.isSuccessful == true) {
+                com.example.data.model.ResultadoVinculo(vinculo = response.body())
+            } else {
+                com.example.data.model.ResultadoVinculo(erro = extrairErroChave(response))
+            }
+        } catch (e: Exception) {
+            Log.e("DataRepository", "encerrarVinculoChave failed: ${e.message}")
+            com.example.data.model.ResultadoVinculo(erro = "Sem conexão com o servidor.")
+        }
+    }
+
     private fun generateMockSolicitacoes() {
         localSolicitacoes.clear()
         for (i in 1..8) {
@@ -994,6 +1298,22 @@ class DataRepository {
                 )
             )
         }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────
+// CONTROLE DE CHAVES
+// ─────────────────────────────────────────────────────────────
+
+/** Lê a mensagem de erro do backend, que vem como {"erro": "..."} nas respostas 404/409. */
+private fun extrairErroChave(response: retrofit2.Response<*>?): String {
+    val padrao = "Não foi possível salvar. Tente de novo."
+    return try {
+        val corpo = response?.errorBody()?.string()
+        if (corpo.isNullOrBlank()) padrao
+        else org.json.JSONObject(corpo).optString("erro").ifBlank { padrao }
+    } catch (e: Exception) {
+        padrao
     }
 }
 

@@ -16,6 +16,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -26,13 +28,60 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.window.Dialog
+import coil.compose.AsyncImage
 import com.example.data.model.CategoriaDTO
 import com.example.data.model.PecaDTO
 import com.example.data.model.SolicitacaoResponseDTO
 import com.example.ui.theme.*
 import com.example.ui.viewmodel.AppViewModel
 
-@OptIn(ExperimentalMaterial3Api::class)
+// Separadores de controle (não aparecem em texto digitado por humanos) usados
+// pra "achatar" os mapas de estado em uma única String salvável no Bundle.
+private const val SEP_ENTRADA = "\u0001"
+private const val SEP_CHAVE_VALOR = "\u0002"
+
+// Saver de descricoesPorProblema (problemaId -> texto do que foi feito).
+// Necessário pra sobreviver caso o Android recrie a Activity/processo (ex:
+// app em segundo plano enquanto a câmera do sistema está aberta).
+private val DescricoesPorProblemaSaver = Saver<androidx.compose.runtime.snapshots.SnapshotStateMap<Long, String>, String>(
+    save = { map -> map.entries.joinToString(SEP_ENTRADA) { "${it.key}$SEP_CHAVE_VALOR${it.value}" } },
+    restore = { saved ->
+        val map = androidx.compose.runtime.mutableStateMapOf<Long, String>()
+        if (saved.isNotEmpty()) {
+            saved.split(SEP_ENTRADA).forEach { entrada ->
+                val idx = entrada.indexOf(SEP_CHAVE_VALOR)
+                if (idx > 0) {
+                    entrada.substring(0, idx).toLongOrNull()?.let { chave ->
+                        map[chave] = entrada.substring(idx + 1)
+                    }
+                }
+            }
+        }
+        map
+    }
+)
+
+// Saver de pecaAssignments (idPeca -> idProblema). Mesma lógica do saver acima.
+private val PecaAssignmentsSaver = Saver<androidx.compose.runtime.snapshots.SnapshotStateMap<Long, Long>, String>(
+    save = { map -> map.entries.joinToString(SEP_ENTRADA) { "${it.key}$SEP_CHAVE_VALOR${it.value}" } },
+    restore = { saved ->
+        val map = androidx.compose.runtime.mutableStateMapOf<Long, Long>()
+        if (saved.isNotEmpty()) {
+            saved.split(SEP_ENTRADA).forEach { entrada ->
+                val partes = entrada.split(SEP_CHAVE_VALOR)
+                if (partes.size == 2) {
+                    val chave = partes[0].toLongOrNull()
+                    val valor = partes[1].toLongOrNull()
+                    if (chave != null && valor != null) map[chave] = valor
+                }
+            }
+        }
+        map
+    }
+)
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun ExecutarSolicitacaoScreen(
     viewModel: AppViewModel,
@@ -42,11 +91,18 @@ fun ExecutarSolicitacaoScreen(
     val categorias by viewModel.categorias.collectAsState()
     val pecasDisponiveis by viewModel.pecasDisponiveis.collectAsState()
     val pecasLoading by viewModel.pecasLoading.collectAsState()
+    // Subcategorias da categoria escolhida + a subcategoria de cada peça em estoque
+    val subCategorias by viewModel.subCategorias.collectAsState()
+    val subCategoriaPorPeca by viewModel.subCategoriaPorPeca.collectAsState()
     val execucaoLoading by viewModel.execucaoLoading.collectAsState()
     val usuarioLogado by viewModel.usuarioLogado.collectAsState()
+    val baseUrl by viewModel.baseUrl.collectAsState()
+    var fotoEmZoomUrl by remember { mutableStateOf<String?>(null) }
 
     // Estado por problema: problemaId -> texto do que foi feito
-    val descricoesPorProblema = remember {
+    // rememberSaveable: precisa sobreviver caso o Android recrie a Activity/processo
+    // (ex: app em segundo plano enquanto a câmera do sistema está aberta).
+    val descricoesPorProblema = rememberSaveable(saver = DescricoesPorProblemaSaver) {
         androidx.compose.runtime.mutableStateMapOf<Long, String>().apply {
             solicitacao.problemas?.forEach { p ->
                 p.idProblema?.let { id -> put(id, "") }
@@ -54,17 +110,36 @@ fun ExecutarSolicitacaoScreen(
         }
     }
 
+    // Estado por problema: problemaId -> foto (Base64) do que foi feito.
+    // OBS: fica de propósito como remember simples (não Saveable) — a foto em
+    // Base64 pode ser grande e colocá-la no savedInstanceState arriscaria
+    // estourar o limite de tamanho do Bundle (TransactionTooLargeException).
+    val fotosPorProblema = remember { androidx.compose.runtime.mutableStateMapOf<Long, String?>() }
+
     // Peças: cada peça selecionada é atribuída a UM problema/máquina específico (idPeca -> idProblema)
-    val pecaAssignments = remember { androidx.compose.runtime.mutableStateMapOf<Long, Long>() }
+    val pecaAssignments = rememberSaveable(saver = PecaAssignmentsSaver) {
+        androidx.compose.runtime.mutableStateMapOf<Long, Long>()
+    }
     // Cache de código/nome das peças já vistas, para não perder a referência ao trocar de categoria
     val pecaInfoCache = remember { androidx.compose.runtime.mutableStateMapOf<Long, PecaDTO>() }
     // idPeca atualmente mostrando o seletor de "qual máquina" (quando há mais de 1 problema)
-    var pecaEmSelecao by remember { mutableStateOf<Long?>(null) }
+    var pecaEmSelecao by rememberSaveable { mutableStateOf<Long?>(null) }
 
     // Seção de peças
-    var usarPecas by remember { mutableStateOf(false) }
-    var categoriaSelecionada by remember { mutableStateOf<CategoriaDTO?>(null) }
+    var usarPecas by rememberSaveable { mutableStateOf(false) }
+    // categoriaSelecionada não é Parcelable — guardamos só o ID (Saveable) e
+    // derivamos o objeto completo a partir da lista já carregada no ViewModel.
+    var categoriaSelecionadaId by rememberSaveable { mutableStateOf<Long?>(null) }
+    val categoriaSelecionada = categoriaSelecionadaId?.let { id -> categorias.find { it.id == id } }
     var expandedCategoriaDropdown by remember { mutableStateOf(false) }
+    // Subcategoria (grupo) atualmente aberta dentro da categoria escolhida
+    var grupoExpandidoId by rememberSaveable { mutableStateOf<Long?>(null) }
+
+    // Peças do estoque agrupadas por subcategoria (ex: Monitores > 17 Pol. > peças).
+    // Peças sem subcategoria caem no grupo "Sem subcategoria".
+    val gruposPecas = remember(pecasDisponiveis, subCategoriaPorPeca, subCategorias) {
+        agruparPecasPorSubCategoria(pecasDisponiveis, subCategoriaPorPeca, subCategorias)
+    }
 
     // Confirmação antes de enviar
     var showConfirmDialog by remember { mutableStateOf(false) }
@@ -114,10 +189,22 @@ fun ExecutarSolicitacaoScreen(
     // Carrega peças quando muda a categoria (mantém as atribuições já feitas em outras categorias)
     LaunchedEffect(categoriaSelecionada) {
         val cat = categoriaSelecionada
+        grupoExpandidoId = null
+        pecaEmSelecao = null
         if (cat != null) {
             viewModel.loadPecasDisponiveis(cat.id)
         } else {
             viewModel.clearPecasDisponiveis()
+        }
+    }
+
+    // Se a categoria só tem um grupo (ex: nenhuma subcategoria cadastrada),
+    // já abre ele — não faz sentido obrigar mais um toque. Também descarta um
+    // grupo aberto que não existe mais depois que as peças recarregam.
+    LaunchedEffect(categoriaSelecionadaId, gruposPecas) {
+        val idsValidos = gruposPecas.map { it.subCategoriaId }
+        if (grupoExpandidoId !in idsValidos) {
+            grupoExpandidoId = if (gruposPecas.size == 1) gruposPecas.first().subCategoriaId else null
         }
     }
 
@@ -183,7 +270,7 @@ fun ExecutarSolicitacaoScreen(
                             .filter { it.value.isNotBlank() }
                             .mapValues { (problemaId, desc) ->
                                 val pecasDoProblema = pecaAssignments.filterValues { it == problemaId }.keys.toList()
-                                Pair<String, List<Long>>(desc, pecasDoProblema)
+                                Triple(desc, pecasDoProblema, fotosPorProblema[problemaId])
                             }
                         viewModel.performRegistrarExecucao(
                             solicitacaoId = solicitacao.id ?: 0L,
@@ -482,6 +569,32 @@ fun ExecutarSolicitacaoScreen(
                                 }
                             }
 
+                            // Foto do chamado (tirada na Abertura de Solicitação) — pra ver o problema relatado
+                            if (problema.temFoto == true && problemaId != null) {
+                                val fotoUrl = remember(baseUrl, problemaId) {
+                                    baseUrl.trimEnd('/') + "/api/fotos/problema/$problemaId"
+                                }
+                                Column {
+                                    Text(
+                                        "📷 Foto do chamado (toque para ampliar)",
+                                        fontSize = 11.sp,
+                                        color = Color(0xFF64748B),
+                                        modifier = Modifier.padding(bottom = 5.dp)
+                                    )
+                                    AsyncImage(
+                                        model = fotoUrl,
+                                        contentDescription = "Foto do chamado",
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(170.dp)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .border(0.5.dp, Color(0xFF1E2A3A), RoundedCornerShape(8.dp))
+                                            .clickable { fotoEmZoomUrl = fotoUrl },
+                                        contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                                    )
+                                }
+                            }
+
                             // Campo: O que foi feito
                             Column {
                                 Row(
@@ -541,6 +654,18 @@ fun ExecutarSolicitacaoScreen(
                                         .padding(top = 3.dp),
                                     textAlign = androidx.compose.ui.text.style.TextAlign.End
                                 )
+
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                // Foto de comprovação do reparo (opcional) — ex: peça trocada, leitura final
+                                if (problemaId != null) {
+                                    PhotoCaptureField(
+                                        fotoBase64 = fotosPorProblema[problemaId],
+                                        onFotoCapturada = { fotosPorProblema[problemaId] = it },
+                                        label = "📸 Tirar foto da correção (opcional)",
+                                        keyId = problemaId.toString()
+                                    )
+                                }
                             }
                         }
                     }
@@ -604,7 +729,7 @@ fun ExecutarSolicitacaoScreen(
                             onCheckedChange = { checked ->
                                 usarPecas = checked
                                 if (!checked) {
-                                    categoriaSelecionada = null
+                                    categoriaSelecionadaId = null
                                     pecaAssignments.clear()
                                     pecaEmSelecao = null
                                 }
@@ -685,7 +810,7 @@ fun ExecutarSolicitacaoScreen(
                                                         .fillMaxWidth()
                                                         .background(if (isSelected) Color(0xFF162035) else Color.Transparent)
                                                         .clickable {
-                                                            categoriaSelecionada = cat
+                                                            categoriaSelecionadaId = cat.id
                                                             expandedCategoriaDropdown = false
                                                         }
                                                         .padding(12.dp),
@@ -725,61 +850,144 @@ fun ExecutarSolicitacaoScreen(
                                         modifier = Modifier.padding(vertical = 8.dp)
                                     )
                                 } else {
-                                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                        pecasDisponiveis.forEach { peca ->
-                                            val assignedProblemaId = pecaAssignments[peca.idPeca]
-                                            val assignedLabel = assignedProblemaId?.let { pid ->
-                                                problemas.find { it.idProblema == pid }?.maquina
+                                    // Clique numa peça: atribui/remove a peça de uma máquina
+                                    val onTogglePeca: (PecaDTO) -> Unit = { peca ->
+                                        val assignedProblemaId = pecaAssignments[peca.idPeca]
+                                        when {
+                                            assignedProblemaId != null -> {
+                                                // já atribuída a uma máquina -> remove
+                                                pecaAssignments.remove(peca.idPeca)
+                                                pecaEmSelecao = null
                                             }
-                                            Column {
-                                                PecaItem(
+                                            problemas.size <= 1 -> {
+                                                // só existe 1 máquina nesta solicitação -> atribui direto
+                                                problemas.firstOrNull()?.idProblema?.let {
+                                                    pecaAssignments[peca.idPeca] = it
+                                                }
+                                            }
+                                            else -> {
+                                                // várias máquinas -> abre seletor de qual máquina usou a peça
+                                                pecaEmSelecao = if (pecaEmSelecao == peca.idPeca) null else peca.idPeca
+                                            }
+                                        }
+                                    }
+
+                                    val semSubcategoria = gruposPecas.size == 1 &&
+                                        gruposPecas.first().subCategoriaId == SEM_SUBCATEGORIA_ID
+
+                                    if (semSubcategoria) {
+                                        // Categoria sem subcategorias cadastradas -> lista simples
+                                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                            gruposPecas.first().pecas.forEach { peca ->
+                                                PecaSelecionavel(
                                                     peca = peca,
-                                                    assignedLabel = assignedLabel,
-                                                    onToggle = {
-                                                        when {
-                                                            assignedProblemaId != null -> {
-                                                                // já atribuída a uma máquina -> remove
-                                                                pecaAssignments.remove(peca.idPeca)
-                                                                pecaEmSelecao = null
-                                                            }
-                                                            problemas.size <= 1 -> {
-                                                                // só existe 1 máquina nesta solicitação -> atribui direto
-                                                                problemas.firstOrNull()?.idProblema?.let {
-                                                                    pecaAssignments[peca.idPeca] = it
-                                                                }
-                                                            }
-                                                            else -> {
-                                                                // várias máquinas -> abre seletor de qual máquina usou a peça
-                                                                pecaEmSelecao = if (pecaEmSelecao == peca.idPeca) null else peca.idPeca
-                                                            }
-                                                        }
+                                                    problemas = problemas,
+                                                    assignedProblemaId = pecaAssignments[peca.idPeca],
+                                                    seletorAberto = pecaEmSelecao == peca.idPeca,
+                                                    onToggle = { onTogglePeca(peca) },
+                                                    onEscolherProblema = { pid ->
+                                                        pecaAssignments[peca.idPeca] = pid
+                                                        pecaEmSelecao = null
                                                     }
                                                 )
-                                                if (pecaEmSelecao == peca.idPeca && problemas.size > 1) {
+                                            }
+                                        }
+                                    } else {
+                                        // Categoria com subcategorias -> uma seção por subcategoria
+                                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                            gruposPecas.forEach { grupo ->
+                                                val expandido = grupoExpandidoId == grupo.subCategoriaId
+                                                val selecionadasNoGrupo = grupo.pecas.count {
+                                                    pecaAssignments.containsKey(it.idPeca)
+                                                }
+                                                Column(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .clip(RoundedCornerShape(8.dp))
+                                                        .background(Color(0xFF0F1623))
+                                                        .border(
+                                                            0.5.dp,
+                                                            if (expandido) BrandOrange.copy(alpha = 0.5f) else Color(0xFF1E2A3A),
+                                                            RoundedCornerShape(8.dp)
+                                                        )
+                                                        .animateContentSize()
+                                                ) {
+                                                    // Cabeçalho da subcategoria
                                                     Row(
                                                         modifier = Modifier
                                                             .fillMaxWidth()
-                                                            .padding(start = 30.dp, top = 2.dp, bottom = 6.dp),
-                                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                            .clickable {
+                                                                grupoExpandidoId = if (expandido) null else grupo.subCategoriaId
+                                                                pecaEmSelecao = null
+                                                            }
+                                                            .padding(horizontal = 10.dp, vertical = 10.dp),
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                                                     ) {
-                                                        problemas.forEach { p ->
-                                                            val pid = p.idProblema
-                                                            if (pid != null) {
-                                                                val numMaq = p.maquina?.substringBefore(" - ")?.trim() ?: "?"
-                                                                AssistChip(
-                                                                    onClick = {
+                                                        Text(
+                                                            grupo.nome,
+                                                            fontSize = 13.sp,
+                                                            fontWeight = FontWeight.SemiBold,
+                                                            fontFamily = FontFamily.Monospace,
+                                                            color = if (expandido) Color(0xFF4ADE80) else Color(0xFFCBD5E1),
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis,
+                                                            modifier = Modifier.weight(1f)
+                                                        )
+                                                        if (selecionadasNoGrupo > 0) {
+                                                            Box(
+                                                                modifier = Modifier
+                                                                    .clip(RoundedCornerShape(5.dp))
+                                                                    .background(Color(0xFF0D2A1A))
+                                                                    .padding(horizontal = 7.dp, vertical = 3.dp)
+                                                            ) {
+                                                                Text(
+                                                                    "$selecionadasNoGrupo selec.",
+                                                                    fontSize = 10.sp,
+                                                                    color = Color(0xFF4ADE80)
+                                                                )
+                                                            }
+                                                        }
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .clip(RoundedCornerShape(5.dp))
+                                                                .background(Color(0xFF1A2332))
+                                                                .padding(horizontal = 7.dp, vertical = 3.dp)
+                                                        ) {
+                                                            Text(
+                                                                "${grupo.pecas.size}",
+                                                                fontSize = 10.sp,
+                                                                color = Color(0xFF94A3B8)
+                                                            )
+                                                        }
+                                                        Icon(
+                                                            if (expandido) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown,
+                                                            contentDescription = null,
+                                                            tint = Color(0xFF64748B),
+                                                            modifier = Modifier.size(20.dp)
+                                                        )
+                                                    }
+
+                                                    // Peças da subcategoria
+                                                    if (expandido) {
+                                                        HorizontalDivider(color = Color(0xFF1E2A3A), thickness = 0.5.dp)
+                                                        Column(
+                                                            modifier = Modifier
+                                                                .fillMaxWidth()
+                                                                .padding(horizontal = 6.dp, vertical = 6.dp),
+                                                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                                                        ) {
+                                                            grupo.pecas.forEach { peca ->
+                                                                PecaSelecionavel(
+                                                                    peca = peca,
+                                                                    problemas = problemas,
+                                                                    assignedProblemaId = pecaAssignments[peca.idPeca],
+                                                                    seletorAberto = pecaEmSelecao == peca.idPeca,
+                                                                    onToggle = { onTogglePeca(peca) },
+                                                                    onEscolherProblema = { pid ->
                                                                         pecaAssignments[peca.idPeca] = pid
                                                                         pecaEmSelecao = null
-                                                                    },
-                                                                    label = { Text("Maq. $numMaq", fontSize = 11.sp) },
-                                                                    colors = AssistChipDefaults.assistChipColors(
-                                                                        containerColor = Color(0xFF0F1623),
-                                                                        labelColor = Color(0xFF4ADE80)
-                                                                    ),
-                                                                    border = AssistChipDefaults.assistChipBorder(
-                                                                        enabled = true,
-                                                                        borderColor = Color(0xFF334155)
-                                                                    )
+                                                                    }
                                                                 )
                                                             }
                                                         }
@@ -834,6 +1042,142 @@ fun ExecutarSolicitacaoScreen(
             Spacer(modifier = Modifier.height(8.dp))
         }
     }
+
+    // Dialog de zoom da foto (abre ao tocar em qualquer miniatura)
+    if (fotoEmZoomUrl != null) {
+        Dialog(onDismissRequest = { fotoEmZoomUrl = null }) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color.Black)
+                    .clickable { fotoEmZoomUrl = null }
+            ) {
+                AsyncImage(
+                    model = fotoEmZoomUrl,
+                    contentDescription = "Foto ampliada",
+                    modifier = Modifier.fillMaxWidth(),
+                    contentScale = androidx.compose.ui.layout.ContentScale.FillWidth
+                )
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────
+// AGRUPAMENTO DAS PEÇAS POR SUBCATEGORIA
+// ─────────────────────────────────────────────────────────────
+
+// Id "falso" usado pelo grupo das peças que não têm subcategoria definida.
+private const val SEM_SUBCATEGORIA_ID = -1L
+
+private data class GrupoPecas(
+    val subCategoriaId: Long,
+    val nome: String,
+    val pecas: List<PecaDTO>
+)
+
+/**
+ * Monta a lista de grupos "subcategoria -> peças" na ordem em que as
+ * subcategorias estão cadastradas. Subcategorias sem peça em estoque não
+ * aparecem, e as peças sem subcategoria vão para um grupo no fim da lista.
+ */
+private fun agruparPecasPorSubCategoria(
+    pecas: List<PecaDTO>,
+    subCategoriaPorPeca: Map<Long, com.example.data.model.SubCategoriaDTO>,
+    subCategorias: List<com.example.data.model.SubCategoriaDTO>
+): List<GrupoPecas> {
+    if (pecas.isEmpty()) return emptyList()
+
+    val porSubCategoria = LinkedHashMap<Long, MutableList<PecaDTO>>()
+    val nomePorSubCategoria = HashMap<Long, String>()
+    val semSubCategoria = mutableListOf<PecaDTO>()
+
+    pecas.forEach { peca ->
+        val sub = subCategoriaPorPeca[peca.idPeca]
+        if (sub == null) {
+            semSubCategoria.add(peca)
+        } else {
+            porSubCategoria.getOrPut(sub.id) { mutableListOf() }.add(peca)
+            nomePorSubCategoria[sub.id] = sub.nome
+        }
+    }
+
+    val grupos = mutableListOf<GrupoPecas>()
+
+    // 1º) na ordem das subcategorias cadastradas
+    subCategorias.forEach { sub ->
+        val doGrupo = porSubCategoria[sub.id]
+        if (!doGrupo.isNullOrEmpty()) {
+            grupos.add(GrupoPecas(sub.id, sub.nome, doGrupo))
+        }
+    }
+    // 2º) alguma subcategoria que veio na peça mas não na lista cadastrada
+    porSubCategoria.forEach { (id, lista) ->
+        if (grupos.none { it.subCategoriaId == id } && lista.isNotEmpty()) {
+            grupos.add(GrupoPecas(id, nomePorSubCategoria[id] ?: "Subcategoria $id", lista))
+        }
+    }
+    // 3º) peças sem subcategoria
+    if (semSubCategoria.isNotEmpty()) {
+        grupos.add(GrupoPecas(SEM_SUBCATEGORIA_ID, "Sem subcategoria", semSubCategoria))
+    }
+
+    return grupos
+}
+
+/**
+ * Linha de peça + (quando a solicitação tem mais de uma máquina) os chips para
+ * escolher em qual máquina a peça foi usada.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun PecaSelecionavel(
+    peca: PecaDTO,
+    problemas: List<com.example.data.model.ProblemaDTO>,
+    assignedProblemaId: Long?,
+    seletorAberto: Boolean,
+    onToggle: () -> Unit,
+    onEscolherProblema: (Long) -> Unit
+) {
+    val assignedLabel = assignedProblemaId?.let { pid ->
+        problemas.find { it.idProblema == pid }?.maquina
+    }
+    Column {
+        PecaItem(
+            peca = peca,
+            assignedLabel = assignedLabel,
+            onToggle = onToggle
+        )
+        if (seletorAberto && problemas.size > 1) {
+            FlowRow(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 30.dp, top = 2.dp, bottom = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                problemas.forEach { p ->
+                    val pid = p.idProblema
+                    if (pid != null) {
+                        val numMaq = p.maquina?.substringBefore(" - ")?.trim() ?: "?"
+                        AssistChip(
+                            onClick = { onEscolherProblema(pid) },
+                            label = { Text("Maq. $numMaq", fontSize = 11.sp) },
+                            colors = AssistChipDefaults.assistChipColors(
+                                containerColor = Color(0xFF0F1623),
+                                labelColor = Color(0xFF4ADE80)
+                            ),
+                            border = AssistChipDefaults.assistChipBorder(
+                                enabled = true,
+                                borderColor = Color(0xFF334155)
+                            )
+                        )
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -883,8 +1227,12 @@ private fun PecaItem(
                 color = Color.White,
                 fontFamily = FontFamily.Monospace
             )
+            val detalhe = listOfNotNull(
+                peca.categoriaNome?.takeIf { it.isNotBlank() },
+                peca.subCategoriaNome?.takeIf { it.isNotBlank() }
+            ).joinToString(" • ")
             Text(
-                "${peca.categoriaNome ?: ""}",
+                detalhe,
                 fontSize = 10.sp,
                 color = Color(0xFF64748B)
             )

@@ -25,8 +25,10 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.animation.AnimatedVisibility
 import com.example.data.model.CategoriaDTO
+import com.example.data.model.JogoDTO
 import com.example.data.model.LoteDTO
 import com.example.data.model.PecaDTO
 import com.example.ui.theme.*
@@ -42,6 +44,7 @@ fun EstoqueScreen(
     onBack: () -> Unit
 ) {
     var tabIdx by remember { mutableStateOf(0) }
+    var selectedCategory by remember { mutableStateOf<CategoriaDTO?>(null) }
     val tabs = listOf("Categorias", "Lotes")
 
     Scaffold(
@@ -80,8 +83,18 @@ fun EstoqueScreen(
                 }
             }
             when (tabIdx) {
-                0 -> TabCategorias(viewModel)
-                1 -> TabLotes(viewModel)
+                0 -> TabCategorias(
+                    viewModel = viewModel,
+                    onCategoriaClick = { cat ->
+                        selectedCategory = cat
+                        tabIdx = 1
+                    }
+                )
+                1 -> TabLotes(
+                    viewModel = viewModel,
+                    selectedCategory = selectedCategory,
+                    onSelectedCategoryChange = { selectedCategory = it }
+                )
             }
         }
     }
@@ -91,7 +104,7 @@ fun EstoqueScreen(
 // ABA: CATEGORIAS
 // ─────────────────────────────────────────────────────────────
 @Composable
-fun TabCategorias(viewModel: AppViewModel) {
+fun TabCategorias(viewModel: AppViewModel, onCategoriaClick: (CategoriaDTO) -> Unit) {
     val categorias by viewModel.categorias.collectAsState()
     val isLoading by viewModel.categoriasLoading.collectAsState()
     var showDialog by remember { mutableStateOf(false) }
@@ -109,7 +122,7 @@ fun TabCategorias(viewModel: AppViewModel) {
                 item {
                     Text("${categorias.size} categoria(s)", style = MaterialTheme.typography.bodySmall, color = Color(0xFF64748B))
                 }
-                items(categorias) { cat -> CategoriaCard(categoria = cat) }
+                items(categorias) { cat -> CategoriaCard(categoria = cat, onClick = { onCategoriaClick(cat) }) }
                 item { Spacer(modifier = Modifier.height(80.dp)) }
             }
         }
@@ -126,9 +139,9 @@ fun TabCategorias(viewModel: AppViewModel) {
 }
 
 @Composable
-fun CategoriaCard(categoria: CategoriaDTO) {
+fun CategoriaCard(categoria: CategoriaDTO, onClick: () -> Unit) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().clickable { onClick() },
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = SleekNavyCard)
     ) {
@@ -202,69 +215,92 @@ fun NovaCategoriaDialog(viewModel: AppViewModel, onDismiss: () -> Unit) {
     }
 }
 
+@Composable
+fun NovaSubCategoriaDialog(
+    viewModel: AppViewModel,
+    categoriaId: Long,
+    onCriada: (com.example.data.model.SubCategoriaDTO) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var nome by remember { mutableStateOf("") }
+    var isLoading by remember { mutableStateOf(false) }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = SleekNavyCard)) {
+            Column(modifier = Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Text("Nova Subcategoria", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color.White)
+                OutlinedTextField(
+                    value = nome, onValueChange = { nome = it },
+                    label = { Text("Nome") }, placeholder = { Text("Ex: 15 Pol., Asus...") },
+                    singleLine = true, modifier = Modifier.fillMaxWidth(), colors = estoqueTextFieldColors()
+                )
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedButton(
+                        onClick = onDismiss, modifier = Modifier.weight(1f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF334155))
+                    ) { Text("Cancelar", color = Color(0xFF94A3B8)) }
+                    Button(
+                        onClick = {
+                            if (nome.isBlank()) return@Button
+                            isLoading = true
+                            viewModel.criarSubCategoria(nome.trim(), categoriaId) { criada ->
+                                isLoading = false
+                                if (criada != null) onCriada(criada)
+                                onDismiss()
+                            }
+                        },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(containerColor = BrandOrange),
+                        enabled = nome.isNotBlank() && !isLoading
+                    ) {
+                        if (isLoading) CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp)
+                        else Text("Salvar", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+}
+
 // ─────────────────────────────────────────────────────────────
 // ABA: LOTES
 // ─────────────────────────────────────────────────────────────
 @Composable
-fun TabLotes(viewModel: AppViewModel) {
+fun TabLotes(
+    viewModel: AppViewModel,
+    selectedCategory: CategoriaDTO?,
+    onSelectedCategoryChange: (CategoriaDTO?) -> Unit
+) {
     val lotes by viewModel.lotes.collectAsState()
     val categorias by viewModel.categorias.collectAsState()
+    val subCategorias by viewModel.subCategorias.collectAsState()
     val isLoading by viewModel.lotesLoading.collectAsState()
     
     var showDialog by remember { mutableStateOf(false) }
     var loteExpandido by remember { mutableStateOf<Long?>(null) }
     
-    var selectedCategory by remember { mutableStateOf<CategoriaDTO?>(null) }
-    var selectedMonitorModel by remember { mutableStateOf<String?>(null) }
+    var selectedSubCategoriaId by remember { mutableStateOf<Long?>(null) }
 
     LaunchedEffect(Unit) {
         viewModel.loadLotes()
         viewModel.loadCategorias()
     }
 
-    val filteredLotes = remember(lotes, selectedCategory, selectedMonitorModel) {
+    // Sempre que a categoria selecionada mudar, busca as subcategorias dela
+    // (fica vazio automaticamente se a categoria não tiver nenhuma cadastrada).
+    LaunchedEffect(selectedCategory?.id) {
+        viewModel.loadSubCategorias(selectedCategory?.id)
+    }
+
+    val filteredLotes = remember(lotes, selectedCategory, selectedSubCategoriaId) {
         lotes.filter { lote ->
             // 1. Filtragem por Categoria
             val matchesCategory = selectedCategory == null || lote.categoria?.id == selectedCategory?.id
-            
-            // 2. Filtragem por subcategoria/modelo se a categoria for "Monitor"
-            val matchesModel = if (selectedCategory?.nome?.contains("monitor", ignoreCase = true) == true) {
-                when (selectedMonitorModel) {
-                    null -> true
-                    "15 Pol." -> {
-                        lote.descricao?.contains("15", ignoreCase = true) == true ||
-                        lote.alias?.contains("15", ignoreCase = true) == true ||
-                        lote.codigo?.contains("15", ignoreCase = true) == true
-                    }
-                    "17 Pol." -> {
-                        lote.descricao?.contains("17", ignoreCase = true) == true ||
-                        lote.alias?.contains("17", ignoreCase = true) == true ||
-                        lote.codigo?.contains("17", ignoreCase = true) == true
-                    }
-                    "18 Pol." -> {
-                        lote.descricao?.contains("18", ignoreCase = true) == true ||
-                        lote.alias?.contains("18", ignoreCase = true) == true ||
-                        lote.codigo?.contains("18", ignoreCase = true) == true
-                    }
-                    "19 Pol." -> {
-                        lote.descricao?.contains("19", ignoreCase = true) == true ||
-                        lote.alias?.contains("19", ignoreCase = true) == true ||
-                        lote.codigo?.contains("19", ignoreCase = true) == true
-                    }
-                    "Outros" -> {
-                        val has15 = lote.descricao?.contains("15", ignoreCase = true) == true || lote.alias?.contains("15", ignoreCase = true) == true || lote.codigo?.contains("15", ignoreCase = true) == true
-                        val has17 = lote.descricao?.contains("17", ignoreCase = true) == true || lote.alias?.contains("17", ignoreCase = true) == true || lote.codigo?.contains("17", ignoreCase = true) == true
-                        val has18 = lote.descricao?.contains("18", ignoreCase = true) == true || lote.alias?.contains("18", ignoreCase = true) == true || lote.codigo?.contains("18", ignoreCase = true) == true
-                        val has19 = lote.descricao?.contains("19", ignoreCase = true) == true || lote.alias?.contains("19", ignoreCase = true) == true || lote.codigo?.contains("19", ignoreCase = true) == true
-                        !has15 && !has17 && !has18 && !has19
-                    }
-                    else -> true
-                }
-            } else {
-                true
-            }
-            
-            matchesCategory && matchesModel
+
+            // 2. Filtragem por subcategoria (dado real vindo do banco, não mais texto)
+            val matchesSub = selectedSubCategoriaId == null || lote.subCategoria?.id == selectedSubCategoriaId
+
+            matchesCategory && matchesSub
         }
     }
 
@@ -293,8 +329,8 @@ fun TabLotes(viewModel: AppViewModel) {
                         text = "Todos",
                         selected = selectedCategory == null,
                         onClick = {
-                            selectedCategory = null
-                            selectedMonitorModel = null
+                            onSelectedCategoryChange(null)
+                            selectedSubCategoriaId = null
                         }
                     )
                     categorias.forEach { cat ->
@@ -302,19 +338,19 @@ fun TabLotes(viewModel: AppViewModel) {
                             text = cat.nome,
                             selected = selectedCategory?.id == cat.id,
                             onClick = {
-                                selectedCategory = cat
-                                selectedMonitorModel = null
+                                onSelectedCategoryChange(cat)
+                                selectedSubCategoriaId = null
                             }
                         )
                     }
                 }
                 
-                // Divisão por modelo (Tamanho) nos Monitores
-                val isMonitorSelected = selectedCategory?.nome?.contains("monitor", ignoreCase = true) == true
-                AnimatedVisibility(visible = isMonitorSelected) {
+                // Subfiltro de Subcategoria — só aparece se a categoria escolhida
+                // tiver subcategorias cadastradas (ex: tamanhos de Monitor).
+                AnimatedVisibility(visible = subCategorias.isNotEmpty()) {
                     Column(modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) {
                         Text(
-                            text = "Modelo (Tamanho)",
+                            text = "Subcategoria",
                             style = MaterialTheme.typography.labelMedium,
                             color = Color(0xFF94A3B8),
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
@@ -326,15 +362,16 @@ fun TabLotes(viewModel: AppViewModel) {
                                 .padding(horizontal = 16.dp),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            val models = listOf("Todos", "15 Pol.", "17 Pol.", "18 Pol.", "19 Pol.", "Outros")
-                            models.forEach { model ->
-                                val isSelected = if (model == "Todos") selectedMonitorModel == null else selectedMonitorModel == model
+                            LoteFilterChip(
+                                text = "Todos",
+                                selected = selectedSubCategoriaId == null,
+                                onClick = { selectedSubCategoriaId = null }
+                            )
+                            subCategorias.forEach { sub ->
                                 LoteFilterChip(
-                                    text = model,
-                                    selected = isSelected,
-                                    onClick = {
-                                        selectedMonitorModel = if (model == "Todos") null else model
-                                    }
+                                    text = sub.nome,
+                                    selected = selectedSubCategoriaId == sub.id,
+                                    onClick = { selectedSubCategoriaId = sub.id }
                                 )
                             }
                         }
@@ -392,6 +429,10 @@ fun LoteCard(
 ) {
     val pecasDoLote by viewModel.pecasDoLote.collectAsState()
     val pecasLoading by viewModel.pecasDoLoteLoading.collectAsState()
+    val faixaPecasPorLote by viewModel.faixaPecasPorLote.collectAsState()
+
+    LaunchedEffect(lote.idLote) { viewModel.loadFaixaPecas(lote.idLote) }
+    val faixa = faixaPecasPorLote[lote.idLote]
 
     val totalQtd = lote.quantidadeComprada
     val qtdAtual = lote.quantidadeAtual
@@ -462,6 +503,9 @@ fun LoteCard(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 InfoChip("ID ${lote.idLote}")
                 InfoChip(lote.alias ?: "-")
+                if (faixa?.first != null && faixa.second != null) {
+                    InfoChip("${faixa.first} - ${faixa.second}")
+                }
                 lote.dataEntrada?.let { InfoChip(it) }
             }
 
@@ -479,12 +523,14 @@ fun LoteCard(
                 } else {
                     val pecas = pecasDoLote[lote.idLote] ?: emptyList()
                     val disponiveis = pecas.count { it.status == "ESTOQUE" }
-                    val instaladas  = pecas.count { it.status != "ESTOQUE" }
+                    val instaladas  = pecas.count { it.status == "INSTALADA" }
+                    val descartadas = pecas.count { it.status == "DESCARTADA" }
 
                     // Resumo
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(bottom = 8.dp)) {
                         ResumoChip(label = "Disponíveis", count = disponiveis, color = Color(0xFF22C55E))
                         ResumoChip(label = "Instaladas",  count = instaladas,  color = Color(0xFFEF4444))
+                        ResumoChip(label = "P.T.",        count = descartadas, color = Color(0xFF94A3B8))
                     }
 
                     if (pecas.isEmpty()) {
@@ -492,7 +538,8 @@ fun LoteCard(
                     } else {
                         // Peças disponíveis
                         val pecasDisp = pecas.filter { it.status == "ESTOQUE" }
-                        val pecasInst = pecas.filter { it.status != "ESTOQUE" }
+                        val pecasInst = pecas.filter { it.status == "INSTALADA" }
+                        val pecasDesc = pecas.filter { it.status == "DESCARTADA" }
 
                         if (pecasDisp.isNotEmpty()) {
                             Text(
@@ -512,7 +559,18 @@ fun LoteCard(
                                 color = Color(0xFFEF4444), fontWeight = FontWeight.Bold,
                                 modifier = Modifier.padding(bottom = 6.dp)
                             )
-                            pecasInst.forEach { PecaRowInstalada(it) }
+                            pecasInst.forEach { PecaRowInstalada(peca = it, loteId = lote.idLote, viewModel = viewModel) }
+                        }
+
+                        if (pecasDesc.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Text(
+                                "Perda Total - P.T. (${pecasDesc.size})",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = Color(0xFF94A3B8), fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(bottom = 6.dp)
+                            )
+                            pecasDesc.forEach { PecaRowDescartada(it) }
                         }
                     }
                 }
@@ -538,8 +596,9 @@ fun PecaRowDisponivel(peca: PecaDTO) {
 }
 
 @Composable
-fun PecaRowInstalada(peca: PecaDTO) {
+fun PecaRowInstalada(peca: PecaDTO, loteId: Long, viewModel: AppViewModel) {
     var expandido by remember { mutableStateOf(false) }
+    var dialogAcao by remember { mutableStateOf<String?>(null) } // "RETIRAR" ou "DESCARTAR"
 
     Column(
         modifier = Modifier
@@ -585,6 +644,135 @@ fun PecaRowInstalada(peca: PecaDTO) {
             peca.observacao?.takeIf { it.isNotBlank() }?.let {
                 DetalheRow(label = "Observação", valor = it)
             }
+
+            Spacer(modifier = Modifier.height(10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = { dialogAcao = "DESCARTAR" },
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF94A3B8)),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF94A3B8).copy(alpha = 0.4f))
+                ) { Text("Descartar (P.T.)", fontSize = 12.sp) }
+                Button(
+                    onClick = { dialogAcao = "RETIRAR" },
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(containerColor = SecondaryEmerald)
+                ) { Text("Estoque", fontSize = 12.sp) }
+            }
+        }
+    }
+
+    if (dialogAcao != null) {
+        PecaAcaoDialog(
+            titulo = if (dialogAcao == "DESCARTAR") "Descartar peça (Perda Total)" else "Devolver ao estoque",
+            mensagem = if (dialogAcao == "DESCARTAR")
+                "Confirma que a peça ${peca.codigo} foi PERDIDA/QUEIMADA? Ela não volta pro estoque."
+            else
+                "Confirma a devolução da peça ${peca.codigo} para o estoque?",
+            confirmarLabel = if (dialogAcao == "DESCARTAR") "Descartar" else "Devolver",
+            confirmarColor = if (dialogAcao == "DESCARTAR") Color(0xFF94A3B8) else SecondaryEmerald,
+            onDismiss = { dialogAcao = null },
+            onConfirm = { observacao ->
+                val acao = dialogAcao
+                dialogAcao = null
+                if (acao == "DESCARTAR") {
+                    viewModel.descartarPeca(peca.idPeca, loteId, observacao) { }
+                } else {
+                    viewModel.retirarPeca(peca.idPeca, loteId, observacao) { }
+                }
+            }
+        )
+    }
+}
+
+@Composable
+fun PecaAcaoDialog(
+    titulo: String,
+    mensagem: String,
+    confirmarLabel: String,
+    confirmarColor: Color,
+    onDismiss: () -> Unit,
+    onConfirm: (observacao: String?) -> Unit
+) {
+    var observacao by remember { mutableStateOf("") }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Card(shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = SleekNavyCard)) {
+            Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Text(titulo, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color.White)
+                Text(mensagem, fontSize = 13.sp, color = Color(0xFF94A3B8))
+                OutlinedTextField(
+                    value = observacao, onValueChange = { observacao = it },
+                    label = { Text("Observação (opcional)") },
+                    placeholder = { Text("Ex: queimou, cliente trocou de local...") },
+                    modifier = Modifier.fillMaxWidth(), colors = estoqueTextFieldColors()
+                )
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedButton(
+                        onClick = onDismiss, modifier = Modifier.weight(1f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF334155))
+                    ) { Text("Cancelar", color = Color(0xFF94A3B8)) }
+                    Button(
+                        onClick = { onConfirm(observacao.trim().ifBlank { null }) },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(containerColor = confirmarColor)
+                    ) { Text(confirmarLabel, fontWeight = FontWeight.Bold) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun PecaRowDescartada(peca: PecaDTO) {
+    var expandido by remember { mutableStateOf(false) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp)
+            .background(Color(0xFF16181A), RoundedCornerShape(10.dp))
+            .border(1.dp, Color(0xFF94A3B8).copy(alpha = 0.2f), RoundedCornerShape(10.dp))
+            .clickable { expandido = !expandido }
+            .padding(10.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(Color(0xFF94A3B8)))
+            Spacer(modifier = Modifier.width(10.dp))
+            Text(peca.codigo, fontWeight = FontWeight.Bold, fontSize = 13.sp, color = Color(0xFF94A3B8), modifier = Modifier.weight(1f))
+            Text("P.T.", fontSize = 12.sp, color = Color(0xFF94A3B8), fontWeight = FontWeight.Bold)
+            Spacer(modifier = Modifier.width(4.dp))
+            Icon(
+                imageVector = if (expandido) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                contentDescription = null, tint = Color(0xFF64748B), modifier = Modifier.size(16.dp)
+            )
+        }
+
+        if (expandido) {
+            Spacer(modifier = Modifier.height(8.dp))
+            HorizontalDivider(color = Color(0xFF94A3B8).copy(alpha = 0.15f))
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                "Última localização antes do descarte:",
+                fontSize = 11.sp, color = Color(0xFF64748B), fontWeight = FontWeight.Medium,
+                modifier = Modifier.padding(bottom = 4.dp)
+            )
+            peca.dataInstalacao?.let {
+                DetalheRow(label = "Data instalação", valor = it)
+            }
+            peca.dataRetirada?.let {
+                DetalheRow(label = "Data descarte", valor = it)
+            }
+            peca.clienteNome?.let {
+                DetalheRow(label = "Ponto (cliente)", valor = it)
+            }
+            peca.maquinaNome?.let {
+                DetalheRow(label = "Máquina", valor = it)
+            }
+            peca.observacao?.takeIf { it.isNotBlank() }?.let {
+                DetalheRow(label = "Observação", valor = it)
+            }
         }
     }
 }
@@ -606,7 +794,11 @@ fun DetalheRow(label: String, valor: String) {
 @Composable
 fun NovoLoteDialog(viewModel: AppViewModel, onDismiss: () -> Unit) {
     val categorias by viewModel.categorias.collectAsState()
+    val subCategorias by viewModel.subCategorias.collectAsState()
+    val jogos by viewModel.jogos.collectAsState()
     var categoriaSelecionada by remember { mutableStateOf<CategoriaDTO?>(null) }
+    var subCategoriaSelecionada by remember { mutableStateOf<com.example.data.model.SubCategoriaDTO?>(null) }
+    var showNovaSubCategoriaDialog by remember { mutableStateOf(false) }
     var alias by remember { mutableStateOf("") }
     var fornecedor by remember { mutableStateOf("") }
     var codigo by remember { mutableStateOf("") }
@@ -616,7 +808,24 @@ fun NovoLoteDialog(viewModel: AppViewModel, onDismiss: () -> Unit) {
     var isLoading by remember { mutableStateOf(false) }
     var showDropdown by remember { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) { viewModel.loadCategorias() }
+    // Modo manual (ex: fornecedor AEC) - código de fábrica + jogo por peça
+    var modoManual by remember { mutableStateOf(false) }
+    var qtdManual by remember { mutableStateOf("") }
+    var linhasManuais by remember { mutableStateOf(listOf<Pair<String, JogoDTO?>>()) }
+
+    LaunchedEffect(Unit) { viewModel.loadCategorias(); viewModel.loadJogos() }
+
+    LaunchedEffect(categoriaSelecionada?.id) {
+        subCategoriaSelecionada = null
+        viewModel.loadSubCategorias(categoriaSelecionada?.id)
+    }
+
+    LaunchedEffect(qtdManual) {
+        val qtd = qtdManual.toIntOrNull() ?: 0
+        linhasManuais = if (qtd in 1..200) {
+            (0 until qtd).map { i -> linhasManuais.getOrNull(i) ?: ("" to null) }
+        } else emptyList()
+    }
 
     val preview = remember(alias, numeroInicial, quantidade) {
         val a = alias.trim().uppercase()
@@ -669,6 +878,47 @@ fun NovoLoteDialog(viewModel: AppViewModel, onDismiss: () -> Unit) {
                     }
                 }
 
+                // Toggle de modo (Automático x Manual)
+                if (categoriaSelecionada != null) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        LoteFilterChip(text = "Automático", selected = !modoManual, onClick = { modoManual = false })
+                        LoteFilterChip(text = "Manual (código de fábrica)", selected = modoManual, onClick = { modoManual = true })
+                    }
+                }
+
+                // Subcategoria — só aparece se a categoria escolhida tiver
+                // subcategorias cadastradas (ex: tamanhos de Monitor).
+                if (categoriaSelecionada != null && subCategorias.isNotEmpty()) {
+                    Column {
+                        Text("Subcategoria", style = MaterialTheme.typography.labelSmall, color = Color(0xFF94A3B8), fontWeight = FontWeight.Bold)
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(
+                            modifier = Modifier.horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            subCategorias.forEach { sub ->
+                                LoteFilterChip(
+                                    text = sub.nome,
+                                    selected = subCategoriaSelecionada?.id == sub.id,
+                                    onClick = { subCategoriaSelecionada = sub }
+                                )
+                            }
+                            LoteFilterChip(
+                                text = "+ Nova",
+                                selected = false,
+                                onClick = { showNovaSubCategoriaDialog = true }
+                            )
+                        }
+                    }
+                } else if (categoriaSelecionada != null) {
+                    LoteFilterChip(
+                        text = "+ Nova Subcategoria",
+                        selected = false,
+                        onClick = { showNovaSubCategoriaDialog = true }
+                    )
+                }
+
+                if (!modoManual) {
                 // Alias + Nº Inicial + Qtd
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedTextField(
@@ -704,6 +954,92 @@ fun NovoLoteDialog(viewModel: AppViewModel, onDismiss: () -> Unit) {
                         Text(preview, fontSize = 12.sp, color = BrandOrange, fontWeight = FontWeight.Bold)
                     }
                 }
+                } // fim modo automático
+
+                if (modoManual) {
+                    OutlinedTextField(
+                        value = qtdManual, onValueChange = { qtdManual = it.filter { c -> c.isDigit() } },
+                        label = { Text("Quantidade de Peças") }, placeholder = { Text("Ex: 10") },
+                        singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth(), colors = estoqueTextFieldColors()
+                    )
+
+                    Text("Código de fábrica + jogo de cada peça", style = MaterialTheme.typography.labelSmall, color = Color(0xFF94A3B8), fontWeight = FontWeight.Bold)
+
+                    Column(
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 260.dp).verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        linhasManuais.forEachIndexed { index, (codigoLinha, jogoLinha) ->
+                            var expandedJogo by remember { mutableStateOf(false) }
+                            Column(modifier = Modifier.fillMaxWidth()) {
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    OutlinedTextField(
+                                        value = codigoLinha,
+                                        onValueChange = { novo ->
+                                            linhasManuais = linhasManuais.toMutableList().also { it[index] = novo to jogoLinha }
+                                        },
+                                        placeholder = { Text("Código (ex: 6DE5)") },
+                                        singleLine = true, modifier = Modifier.weight(1f), colors = estoqueTextFieldColors()
+                                    )
+                                    OutlinedButton(
+                                        onClick = { expandedJogo = !expandedJogo },
+                                        modifier = Modifier.weight(1f),
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF334155))
+                                    ) {
+                                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                            Text(
+                                                jogoLinha?.nome ?: "Jogo...",
+                                                color = if (jogoLinha != null) Color.White else Color(0xFF64748B),
+                                                fontSize = 12.sp,
+                                                maxLines = 1,
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                            Icon(
+                                                imageVector = if (expandedJogo) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                                contentDescription = null, tint = Color(0xFF64748B), modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                    }
+                                }
+
+                                // Lista de jogos aberta INLINE (não é popup) - funciona em qualquer
+                                // aparelho, independente de estar dentro de Dialog/scroll aninhado.
+                                if (expandedJogo) {
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .heightIn(max = 180.dp)
+                                            .verticalScroll(rememberScrollState())
+                                            .background(Color(0xFF0F1720), RoundedCornerShape(8.dp))
+                                            .border(1.dp, Color(0xFF334155), RoundedCornerShape(8.dp))
+                                            .padding(vertical = 4.dp)
+                                    ) {
+                                        if (jogos.isEmpty()) {
+                                            Text(
+                                                "Carregando jogos...", color = Color(0xFF64748B), fontSize = 12.sp,
+                                                modifier = Modifier.padding(10.dp)
+                                            )
+                                        }
+                                        jogos.forEach { jogo ->
+                                            Text(
+                                                jogo.nome ?: "-",
+                                                color = Color.White, fontSize = 13.sp,
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clickable {
+                                                        linhasManuais = linhasManuais.toMutableList().also { it[index] = codigoLinha to jogo }
+                                                        expandedJogo = false
+                                                    }
+                                                    .padding(horizontal = 12.dp, vertical = 10.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
 
                 OutlinedTextField(
                     value = fornecedor, onValueChange = { fornecedor = it },
@@ -729,24 +1065,45 @@ fun NovoLoteDialog(viewModel: AppViewModel, onDismiss: () -> Unit) {
                     Button(
                         onClick = {
                             val cat = categoriaSelecionada ?: return@Button
-                            val qtd = quantidade.toIntOrNull() ?: return@Button
-                            val numInicial = numeroInicial.toIntOrNull() ?: return@Button
-                            if (alias.isBlank()) return@Button
-                            isLoading = true
-                            viewModel.criarLote(
-                                categoriaId = cat.id,
-                                alias = alias.trim(),
-                                fornecedor = fornecedor.trim().ifBlank { null },
-                                codigo = codigo.trim().ifBlank { null },
-                                descricao = descricao.trim().ifBlank { null },
-                                quantidadeComprada = qtd,
-                                numeroInicial = numInicial,
-                                dataEntrada = java.time.LocalDate.now().toString()
-                            ) { isLoading = false; onDismiss() }
+                            if (modoManual) {
+                                if (fornecedor.isBlank()) return@Button
+                                if (linhasManuais.isEmpty() || linhasManuais.any { it.first.isBlank() }) return@Button
+                                isLoading = true
+                                viewModel.criarLoteManual(
+                                    categoriaId = cat.id,
+                                    subCategoriaId = subCategoriaSelecionada?.id,
+                                    fornecedor = fornecedor.trim(),
+                                    descricao = descricao.trim().ifBlank { null },
+                                    dataEntrada = java.time.LocalDate.now().toString(),
+                                    pecas = linhasManuais.map { (cod, jogo) ->
+                                        com.example.data.model.PecaManualDTO(codigo = cod.trim(), jogoId = jogo?.id)
+                                    }
+                                ) { isLoading = false; onDismiss() }
+                            } else {
+                                val qtd = quantidade.toIntOrNull() ?: return@Button
+                                val numInicial = numeroInicial.toIntOrNull() ?: return@Button
+                                if (alias.isBlank()) return@Button
+                                isLoading = true
+                                viewModel.criarLote(
+                                    categoriaId = cat.id,
+                                    subCategoriaId = subCategoriaSelecionada?.id,
+                                    alias = alias.trim(),
+                                    fornecedor = fornecedor.trim().ifBlank { null },
+                                    codigo = codigo.trim().ifBlank { null },
+                                    descricao = descricao.trim().ifBlank { null },
+                                    quantidadeComprada = qtd,
+                                    numeroInicial = numInicial,
+                                    dataEntrada = java.time.LocalDate.now().toString()
+                                ) { isLoading = false; onDismiss() }
+                            }
                         },
                         modifier = Modifier.weight(1f),
                         colors = ButtonDefaults.buttonColors(containerColor = BrandOrange),
-                        enabled = categoriaSelecionada != null && alias.isNotBlank() && quantidade.isNotBlank() && numeroInicial.isNotBlank() && !isLoading
+                        enabled = categoriaSelecionada != null && !isLoading && if (modoManual) {
+                            fornecedor.isNotBlank() && linhasManuais.isNotEmpty() && linhasManuais.none { it.first.isBlank() }
+                        } else {
+                            alias.isNotBlank() && quantidade.isNotBlank() && numeroInicial.isNotBlank()
+                        }
                     ) {
                         if (isLoading) CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp)
                         else Text("Salvar", fontWeight = FontWeight.Bold)
@@ -754,6 +1111,15 @@ fun NovoLoteDialog(viewModel: AppViewModel, onDismiss: () -> Unit) {
                 }
             }
         }
+    }
+
+    if (showNovaSubCategoriaDialog && categoriaSelecionada != null) {
+        NovaSubCategoriaDialog(
+            viewModel = viewModel,
+            categoriaId = categoriaSelecionada!!.id,
+            onCriada = { subCategoriaSelecionada = it },
+            onDismiss = { showNovaSubCategoriaDialog = false }
+        )
     }
 }
 

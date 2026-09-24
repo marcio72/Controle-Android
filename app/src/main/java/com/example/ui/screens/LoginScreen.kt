@@ -50,6 +50,7 @@ fun LoginScreen(
     var passwordVisible by remember { mutableStateOf(false) }
     var showUrlConfig by remember { mutableStateOf(false) }
     var editedUrl by remember { mutableStateOf(baseUrl) }
+    var showTrocarSenhaDialog by remember { mutableStateOf(false) }
 
     Box(
         modifier = Modifier
@@ -209,7 +210,7 @@ fun LoginScreen(
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier
                                 .clickable {
-                                    viewModel.showNotification("Entre em contato com o administrador do sistema para redefinir sua senha.")
+                                    showTrocarSenhaDialog = true
                                 }
                                 .padding(vertical = 4.dp, horizontal = 2.dp)
                         )
@@ -320,6 +321,141 @@ fun LoginScreen(
                 color = Color(0xFF64748B),
                 modifier = Modifier.padding(top = 16.dp)
             )
+        }
+    }
+
+    if (showTrocarSenhaDialog) {
+        TrocarSenhaDialog(
+            viewModel = viewModel,
+            usernameInicial = username,
+            onDismiss = { showTrocarSenhaDialog = false }
+        )
+    }
+}
+
+@Composable
+private fun TrocarSenhaDialog(
+    viewModel: AppViewModel,
+    usernameInicial: String,
+    onDismiss: () -> Unit
+) {
+    var usernameField by remember { mutableStateOf(usernameInicial) }
+    var senhaAtual by remember { mutableStateOf("") }
+    var senhaNova by remember { mutableStateOf("") }
+    var senhaConfirma by remember { mutableStateOf("") }
+    var mensagem by remember { mutableStateOf<String?>(null) }
+    var sucesso by remember { mutableStateOf(false) }
+    val loading by viewModel.trocarSenhaLoading.collectAsState()
+
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = SleekNavyCard),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(24.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Text(
+                    "Trocar Senha",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
+
+                OutlinedTextField(
+                    value = usernameField,
+                    onValueChange = { usernameField = it },
+                    label = { Text("Usuário") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                OutlinedTextField(
+                    value = senhaAtual,
+                    onValueChange = { senhaAtual = it },
+                    label = { Text("Senha atual") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                OutlinedTextField(
+                    value = senhaNova,
+                    onValueChange = { senhaNova = it },
+                    label = { Text("Nova senha") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                OutlinedTextField(
+                    value = senhaConfirma,
+                    onValueChange = { senhaConfirma = it },
+                    label = { Text("Confirmar nova senha") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                mensagem?.let { msg ->
+                    Text(
+                        msg,
+                        color = if (sucesso) Color(0xFF4ADE80) else Color(0xFFEF4444),
+                        fontSize = 13.sp
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text("Cancelar", color = Color(0xFF94A3B8))
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            if (senhaNova != senhaConfirma) {
+                                mensagem = "A nova senha e a confirmação não coincidem."
+                                sucesso = false
+                                return@Button
+                            }
+                            viewModel.performTrocarSenha(
+                                username = usernameField,
+                                senhaAtual = senhaAtual,
+                                senhaNova = senhaNova
+                            ) { ok, msg ->
+                                sucesso = ok
+                                mensagem = msg
+                                if (ok) {
+                                    senhaAtual = ""
+                                    senhaNova = ""
+                                    senhaConfirma = ""
+                                }
+                            }
+                        },
+                        enabled = !loading,
+                        colors = ButtonDefaults.buttonColors(containerColor = BrandOrange)
+                    ) {
+                        if (loading) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                color = Color.White,
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Text("Trocar Senha", color = Color.White)
+                        }
+                    }
+                }
+            }
         }
     }
 }

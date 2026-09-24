@@ -138,12 +138,46 @@ interface SpringApiService {
     @GET("api/categorias")
     suspend fun getCategorias(): List<com.example.data.model.CategoriaDTO>
 
+    // --- SUBCATEGORIAS ---
+    @GET("api/subcategorias")
+    suspend fun getSubCategorias(
+        @Query("categoriaId") categoriaId: Long? = null
+    ): List<com.example.data.model.SubCategoriaDTO>
+
+    @POST("api/subcategorias")
+    suspend fun criarSubCategoria(
+        @Body req: com.example.data.model.CriarSubCategoriaRequest
+    ): retrofit2.Response<com.example.data.model.SubCategoriaDTO>
+
     // --- LOTES ---
     @GET("api/lotes")
     suspend fun getLotes(): List<com.example.data.model.LoteDTO>
 
     @GET("api/lotes/{id}/pecas")
     suspend fun getPecasDoLote(@Path("id") id: Long): List<com.example.data.model.PecaDTO>
+
+    @GET("api/lotes/{id}/faixa-pecas")
+    suspend fun getFaixaPecasDoLote(@Path("id") id: Long): Map<String, String?>
+
+    @POST("api/pecas/{id}/retirar")
+    suspend fun retirarPeca(
+        @Path("id") id: Long,
+        @Body body: com.example.data.model.PecaAcaoRequestDTO
+    ): retrofit2.Response<Map<String, String>>
+
+    @POST("api/pecas/{id}/descartar")
+    suspend fun descartarPeca(
+        @Path("id") id: Long,
+        @Body body: com.example.data.model.PecaAcaoRequestDTO
+    ): retrofit2.Response<Map<String, String>>
+
+    @GET("api/jogos")
+    suspend fun getJogos(): List<com.example.data.model.JogoDTO>
+
+    @POST("api/lotes/manual")
+    suspend fun criarLoteManual(
+        @Body request: com.example.data.model.LoteManualRequestDTO
+    ): retrofit2.Response<com.example.data.model.LoteDTO>
 
     @POST("api/lotes")
     suspend fun criarLote(@Body lote: com.example.data.model.LoteRequestDTO): retrofit2.Response<com.example.data.model.LoteDTO>
@@ -159,5 +193,73 @@ interface SpringApiService {
 
     @GET("api/log-envio")
     suspend fun listarLogEnvios(): List<com.example.data.model.LogEnvioDTO>
+
+    // --- CONTROLE DE CHAVES ---
+    @GET("api/chaves")
+    suspend fun getChaves(
+        @Query("numero") numero: String? = null,
+        @Query("fornecedorId") fornecedorId: Long? = null,
+        @Query("tipo") tipo: String? = null,
+        @Query("ativo") ativo: Boolean? = null
+    ): List<com.example.data.model.ChaveDTO>
+
+    @POST("api/chaves")
+    suspend fun criarChave(
+        @Body chave: com.example.data.model.ChaveRequestDTO
+    ): retrofit2.Response<com.example.data.model.ChaveDTO>
+
+    @PUT("api/chaves/{id}")
+    suspend fun atualizarChave(
+        @Path("id") id: Long,
+        @Body chave: com.example.data.model.ChaveRequestDTO
+    ): retrofit2.Response<com.example.data.model.ChaveDTO>
+
+    @PATCH("api/chaves/{id}/ativo")
+    suspend fun alterarAtivoChave(
+        @Path("id") id: Long,
+        @Query("valor") valor: Boolean
+    ): retrofit2.Response<com.example.data.model.ChaveDTO>
+
+    @GET("api/chaves/fornecedores")
+    suspend fun getFornecedoresChave(): List<com.example.data.model.FornecedorChaveDTO>
+
+    @POST("api/chaves/fornecedores")
+    suspend fun criarFornecedorChave(
+        @Body body: com.example.data.model.CriarFornecedorChaveRequest
+    ): retrofit2.Response<com.example.data.model.FornecedorChaveDTO>
+
+    // --- VÍNCULO CHAVE ↔ MÁQUINA ---
+    @GET("api/chaves/{chaveId}/maquinas")
+    suspend fun getMaquinasDaChave(
+        @Path("chaveId") chaveId: Long,
+        @Query("historico") historico: Boolean
+    ): List<com.example.data.model.VinculoChaveDTO>
+
+    @GET("api/chaves/maquinas/buscar")
+    suspend fun buscarMaquinasPorNumero(
+        @Query("numero") numero: String,
+        @Query("praca") praca: String? = null
+    ): retrofit2.Response<List<com.example.data.model.MaquinaOpcaoDTO>>
+
+    @GET("api/chaves/pracas")
+    suspend fun getPracasChave(): List<String>
+
+    @POST("api/chaves/maquinas/{maquinaId}")
+    suspend fun vincularChave(
+        @Path("maquinaId") maquinaId: Long,
+        @Body body: com.example.data.model.VinculoChaveRequestDTO
+    ): retrofit2.Response<com.example.data.model.VinculoChaveDTO>
+
+    @PATCH("api/chaves/vinculos/{id}/encerrar")
+    suspend fun encerrarVinculoChave(
+        @Path("id") id: Long,
+        @Body body: com.example.data.model.EncerrarVinculoRequest
+    ): retrofit2.Response<com.example.data.model.VinculoChaveDTO>
+
+    // --- TROCA DE SENHA ---
+    @POST("api/usuarios/trocar-senha")
+    suspend fun trocarSenha(
+        @Body body: com.example.data.model.TrocarSenhaRequestDTO
+    ): retrofit2.Response<com.example.data.model.TrocarSenhaResponseDTO>
 
 }

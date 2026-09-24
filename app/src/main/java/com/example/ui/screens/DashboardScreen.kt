@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -73,13 +74,27 @@ fun DashboardScreen(
     val appMessage by viewModel.appMessage.collectAsState()
 
     var showConfigDialog by remember { mutableStateOf(false) }
-    var screenSection by remember { mutableStateOf("hub") } // "hub", "clientes", "maquinas", "novo_cliente", "nova_maquina", "editar_cliente"
-    var hubTabIdx by remember { mutableStateOf(0) } // 0 = Início, 1 = Solicitações, 2 = Execuções, 3 = Mais
+    // rememberSaveable: precisa sobreviver caso o Android recrie a Activity/processo
+    // (ex: app em segundo plano enquanto a câmera do sistema está aberta ao tirar
+    // uma foto durante a execução de uma solicitação).
+    var screenSection by rememberSaveable { mutableStateOf("hub") } // "hub", "clientes", "maquinas", "novo_cliente", "nova_maquina", "editar_cliente"
+    var hubTabIdx by rememberSaveable { mutableStateOf(0) } // 0 = Início, 1 = Solicitações, 2 = Execuções, 3 = Mais
     var showMaisSheet by remember { mutableStateOf(false) }
     var clienteParaEditar by remember { mutableStateOf<Cliente?>(null) }
     var maquinaParaEditar by remember { mutableStateOf<Maquina?>(null) }
     var origemEdicaoMaquina by remember { mutableStateOf("clientes") }
-    var solicitacaoParaExecutar by remember { mutableStateOf<com.example.data.model.SolicitacaoResponseDTO?>(null) }
+    // Guardamos só o ID (Saveable) e derivamos o objeto completo a partir da lista
+    // já carregada no ViewModel — um SolicitacaoResponseDTO não é Parcelable, então
+    // não dá pra guardar o objeto inteiro num rememberSaveable diretamente.
+    var solicitacaoParaExecutarId by rememberSaveable { mutableStateOf<Long?>(null) }
+    val solicitacoesListParaExecucao by viewModel.solicitacoesList.collectAsState()
+    // null até a primeira atualização da lista terminar — usado pra não desistir
+    // cedo demais caso o processo tenha acabado de ser recriado e a lista ainda
+    // esteja sendo recarregada.
+    val solicitacoesJaCarregadasUmaVez by viewModel.solicitacoesLastUpdated.collectAsState()
+    val solicitacaoParaExecutar = solicitacaoParaExecutarId?.let { id ->
+        solicitacoesListParaExecucao.find { it.id == id }
+    }
     var clienteParaHistorico by remember { mutableStateOf<Cliente?>(null) }
     var maquinaParaHistorico by remember { mutableStateOf<Maquina?>(null) }
 
@@ -246,13 +261,23 @@ fun DashboardScreen(
                     viewModel = viewModel,
                     solicitacao = solicitacao,
                     onBack = {
-                        solicitacaoParaExecutar = null
+                        solicitacaoParaExecutarId = null
                         screenSection = "hub"
                         hubTabIdx = 1
                     }
                 )
             } ?: run {
-                screenSection = "hub"
+                if (solicitacaoParaExecutarId != null && solicitacoesJaCarregadasUmaVez == null) {
+                    // Provavelmente acabamos de voltar de uma recriação de processo
+                    // (ex: câmera) — a lista ainda está recarregando, aguarda em vez
+                    // de já jogar o usuário de volta pro hub.
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(color = PrimaryBlue, strokeWidth = 3.dp)
+                    }
+                } else {
+                    solicitacaoParaExecutarId = null
+                    screenSection = "hub"
+                }
             }
         }
         "estoque" -> {
@@ -263,6 +288,12 @@ fun DashboardScreen(
         }
         "log_envio" -> {
             LogEnvioScreen(
+                viewModel = viewModel,
+                onBack = { screenSection = "hub" }
+            )
+        }
+        "chaves" -> {
+            ChavesScreen(
                 viewModel = viewModel,
                 onBack = { screenSection = "hub" }
             )
@@ -364,7 +395,8 @@ fun DashboardScreen(
                             onRelatorio = { showMaisSheet = false; hubTabIdx = 10 },
                             onEstoque   = { showMaisSheet = false; screenSection = "estoque" },
                             onPerfil    = { showMaisSheet = false; hubTabIdx = 11 },
-                            onLogEnvio  = { showMaisSheet = false; screenSection = "log_envio" }
+                            onLogEnvio  = { showMaisSheet = false; screenSection = "log_envio" },
+                            onChaves    = { showMaisSheet = false; screenSection = "chaves" }
                         )
                     }
 
@@ -377,7 +409,7 @@ fun DashboardScreen(
                         1 -> TabSolicitacoesList(
                             viewModel = viewModel,
                             onExecutar = { solicitacao ->
-                                solicitacaoParaExecutar = solicitacao
+                                solicitacaoParaExecutarId = solicitacao.id
                                 screenSection = "executar_solicitacao"
                             }
                         )
@@ -3485,7 +3517,8 @@ fun QuickAccessGridCard(
 data class ProblemaEntrada(
     val maquinaId: String,
     val maquinaLabel: String,
-    val descricao: String
+    val descricao: String,
+    val fotoBase64: String? = null
 )
 
 @Composable
@@ -3501,6 +3534,7 @@ fun NewSolicitacaoDialog(
     var expandedDropdown by remember { mutableStateOf(false) }
     var selectedMaquina by remember { mutableStateOf<com.example.data.model.Maquina?>(null) }
     var expandedMaquinaDropdown by remember { mutableStateOf(false) }
+    var fotoAtualBase64 by remember { mutableStateOf<String?>(null) }
     val problemasAdicionados = remember { mutableStateListOf<ProblemaEntrada>() }
 
     Dialog(
@@ -3556,7 +3590,7 @@ fun NewSolicitacaoDialog(
                 border = BorderStroke(1.dp, BrandOrange.copy(alpha = 0.35f)),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(min = 480.dp, max = 640.dp)
+                    .heightIn(min = 500.dp, max = 700.dp)
             ) {
             Column(
                 modifier = Modifier
@@ -3611,7 +3645,7 @@ fun NewSolicitacaoDialog(
                             border = BorderStroke(1.dp, TerminalBorder),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .heightIn(max = 160.dp)
+                                .heightIn(max = 220.dp)
                                 .padding(top = 4.dp)
                         ) {
                             LazyColumn(modifier = Modifier.fillMaxWidth()) {
@@ -3781,6 +3815,13 @@ fun NewSolicitacaoDialog(
                         )
                     }
 
+                    // Foto do problema desta máquina (opcional, com ênfase nesta tela)
+                    PhotoCaptureField(
+                        fotoBase64 = fotoAtualBase64,
+                        onFotoCapturada = { fotoAtualBase64 = it },
+                        label = "Foto do problema (opcional)"
+                    )
+
                     // Botão Adicionar Máquina à lista da solicitação
                     Button(
                         onClick = {
@@ -3788,9 +3829,10 @@ fun NewSolicitacaoDialog(
                             val idStr = maq?.id?.toString() ?: ""
                             if (maq != null && desc.isNotBlank() && problemasAdicionados.none { it.maquinaId == idStr }) {
                                 val label = "${maq.nom_maq ?: ""} - ${maq.nom_jogo ?: ""}"
-                                problemasAdicionados.add(ProblemaEntrada(idStr, label, desc.trim()))
+                                problemasAdicionados.add(ProblemaEntrada(idStr, label, desc.trim(), fotoAtualBase64))
                                 selectedMaquina = null
                                 desc = ""
+                                fotoAtualBase64 = null
                             }
                         },
                         enabled = selectedMaquina != null && desc.isNotBlank() &&
@@ -3832,13 +3874,24 @@ fun NewSolicitacaoDialog(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = item.maquinaLabel,
-                                            color = TerminalGreenBright,
-                                            fontFamily = FontFamily.Monospace,
-                                            fontSize = 13.sp,
-                                            fontWeight = FontWeight.Bold
-                                        )
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(
+                                                text = item.maquinaLabel,
+                                                color = TerminalGreenBright,
+                                                fontFamily = FontFamily.Monospace,
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                            if (item.fotoBase64 != null) {
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Icon(
+                                                    imageVector = Icons.Default.CameraAlt,
+                                                    contentDescription = "Tem foto",
+                                                    tint = BrandOrange,
+                                                    modifier = Modifier.size(13.dp)
+                                                )
+                                            }
+                                        }
                                         Text(
                                             text = item.descricao,
                                             color = TerminalHint,
@@ -4469,7 +4522,8 @@ fun MaisBottomSheet(
     onRelatorio: () -> Unit,
     onEstoque: () -> Unit,
     onPerfil: () -> Unit,
-    onLogEnvio: () -> Unit
+    onLogEnvio: () -> Unit,
+    onChaves: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
@@ -4514,6 +4568,14 @@ fun MaisBottomSheet(
                 title = "Estoque",
                 subtitle = "Categorias e lotes de peças",
                 onClick = onEstoque
+            )
+            HorizontalDivider(color = androidx.compose.ui.graphics.Color(0xFF1E293B), modifier = Modifier.padding(vertical = 4.dp))
+            MaisSheetItem(
+                icon = Icons.Default.VpnKey,
+                iconColor = androidx.compose.ui.graphics.Color(0xFFFFB703),
+                title = "Chaves",
+                subtitle = "Chaves e cadeados das máquinas",
+                onClick = onChaves
             )
             HorizontalDivider(color = androidx.compose.ui.graphics.Color(0xFF1E293B), modifier = Modifier.padding(vertical = 4.dp))
             MaisSheetItem(

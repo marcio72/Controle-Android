@@ -1,10 +1,12 @@
 package com.example.ui.viewmodel
 
+import android.app.Application
 import android.content.Context
 import android.util.Log
 import android.widget.Toast
-import androidx.lifecycle.ViewModel
+import androidx.lifecycle.AndroidViewModel
 import com.example.util.LocationHelper
+import com.example.util.SessionManager
 import androidx.lifecycle.viewModelScope
 import com.example.data.model.Cliente
 import com.example.data.model.Maquina
@@ -15,6 +17,9 @@ import com.example.data.model.SolicitacaoResponseDTO
 import com.example.data.repository.DataRepository
 import com.example.util.PdfExporter
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -25,7 +30,7 @@ import java.io.File
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 
-class AppViewModel : ViewModel() {
+class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     val repository = DataRepository()
 
@@ -74,6 +79,24 @@ class AppViewModel : ViewModel() {
 
     private val _execucoesLoading = MutableStateFlow(false)
     val execucoesLoading: StateFlow<Boolean> = _execucoesLoading.asStateFlow()
+
+    // Restaura a sessão salva (se houver) assim que o ViewModel é criado.
+    // Isso cobre o caso em que o Android matou o processo do app em segundo
+    // plano (ex: enquanto a câmera do sistema estava aberta) e o recriou
+    // depois — sem isso, o app cairia na tela de login mesmo já logado.
+    // Envolvido em try/catch: qualquer falha aqui não pode travar a abertura do app.
+    init {
+        try {
+            val usuarioSalvo = SessionManager.carregarSessao(getApplication<Application>())
+            if (usuarioSalvo != null) {
+                _usuarioLogado.value = usuarioSalvo
+                _isLoggedIn.value = true
+                clearAndReloadAll()
+            }
+        } catch (e: Exception) {
+            Log.e("AppViewModel", "Falha ao restaurar sessão salva: ${e.message}")
+        }
+    }
 
     fun loadExecucoes() {
         viewModelScope.launch {
@@ -497,6 +520,7 @@ class AppViewModel : ViewModel() {
                 if (user != null) {
                     _usuarioLogado.value = user
                     _isLoggedIn.value = true
+                    SessionManager.salvarSessao(getApplication<Application>(), user)
                     onResult(true)
                     showNotification("Bem-vindo, ${user.nome ?: user.username}!")
                     clearAndReloadAll()
@@ -517,6 +541,7 @@ class AppViewModel : ViewModel() {
     fun performLogout() {
         _usuarioLogado.value = null
         _isLoggedIn.value = false
+        SessionManager.limparSessao(getApplication<Application>())
         showNotification("Sessão encerrada.")
     }
 
@@ -550,7 +575,8 @@ class AppViewModel : ViewModel() {
                         idProblema = null,
                         numeroMaquina = numeroMaquinaLong,
                         maquina = maquinaValue,
-                        descricao = item.descricao
+                        descricao = item.descricao,
+                        fotoBase64 = item.fotoBase64
                     )
                 }
 
@@ -818,6 +844,39 @@ class AppViewModel : ViewModel() {
     private val _categorias = MutableStateFlow<List<com.example.data.model.CategoriaDTO>>(emptyList())
     val categorias: StateFlow<List<com.example.data.model.CategoriaDTO>> = _categorias.asStateFlow()
 
+    // Subcategorias da categoria atualmente selecionada (ex: tamanhos de Monitor).
+    // Fica vazio quando a categoria escolhida não tem nenhuma cadastrada.
+    private val _subCategorias = MutableStateFlow<List<com.example.data.model.SubCategoriaDTO>>(emptyList())
+    val subCategorias: StateFlow<List<com.example.data.model.SubCategoriaDTO>> = _subCategorias.asStateFlow()
+
+    fun loadSubCategorias(categoriaId: Long?) {
+        if (categoriaId == null) {
+            _subCategorias.value = emptyList()
+            return
+        }
+        viewModelScope.launch {
+            try {
+                _subCategorias.value = repository.getSubCategorias(categoriaId)
+            } catch (e: Exception) {
+                Log.e("AppViewModel", "loadSubCategorias error: ${e.message}")
+                _subCategorias.value = emptyList()
+            }
+        }
+    }
+
+    fun criarSubCategoria(nome: String, categoriaId: Long, onResult: (com.example.data.model.SubCategoriaDTO?) -> Unit) {
+        viewModelScope.launch {
+            val resultado = repository.criarSubCategoria(nome, categoriaId)
+            if (resultado != null) {
+                showNotification("Subcategoria criada!")
+                loadSubCategorias(categoriaId)
+            } else {
+                showNotification("Erro ao criar subcategoria.")
+            }
+            onResult(resultado)
+        }
+    }
+
     private val _pecasDisponiveis = MutableStateFlow<List<com.example.data.model.PecaDTO>>(emptyList())
     val pecasDisponiveis: StateFlow<List<com.example.data.model.PecaDTO>> = _pecasDisponiveis.asStateFlow()
 
@@ -837,17 +896,113 @@ class AppViewModel : ViewModel() {
         }
     }
 
+    // Subcategoria de cada peça disponível (idPeca -> SubCategoriaDTO).
+    // Preenchido em loadPecasDisponiveis: usa o campo subCategoriaId da própria
+    // peça quando o backend envia; senão, descobre pelo lote de origem.
+    private val _subCategoriaPorPeca =
+        MutableStateFlow<Map<Long, com.example.data.model.SubCategoriaDTO>>(emptyMap())
+    val subCategoriaPorPeca: StateFlow<Map<Long, com.example.data.model.SubCategoriaDTO>> =
+        _subCategoriaPorPeca.asStateFlow()
+
+    /**
+     * Carrega as peças em estoque da categoria e resolve a subcategoria de cada
+     * uma, para a tela de execução poder agrupar "Categoria > Subcategoria > peças".
+     *
+     * Também atualiza [subCategorias] com as subcategorias cadastradas da
+     * categoria escolhida (fica vazio se a categoria não tiver nenhuma).
+     */
     fun loadPecasDisponiveis(categoriaId: Long) {
         viewModelScope.launch {
             _pecasLoading.value = true
+            _subCategoriaPorPeca.value = emptyMap()
             try {
-                _pecasDisponiveis.value = repository.getPecasDisponiveis(categoriaId)
+                val subs = repository.getSubCategorias(categoriaId)
+                _subCategorias.value = subs
+
+                val pecas = repository.getPecasDisponiveis(categoriaId)
+                _pecasDisponiveis.value = pecas
+
+                _subCategoriaPorPeca.value = resolverSubCategoriaDasPecas(categoriaId, pecas, subs)
             } catch (e: Exception) {
                 Log.e("AppViewModel", "loadPecasDisponiveis error: ${e.message}")
                 _pecasDisponiveis.value = emptyList()
+                _subCategoriaPorPeca.value = emptyMap()
             } finally {
                 _pecasLoading.value = false
             }
+        }
+    }
+
+    /**
+     * Monta o mapa idPeca -> subcategoria.
+     *
+     * 1º) Se a peça já vem com subCategoriaId do backend, usa direto (sem rede).
+     * 2º) Senão, e se a categoria tiver subcategorias cadastradas, busca os lotes
+     *     dessa categoria (o lote guarda a subcategoria) e marca as peças de cada
+     *     lote. As peças que sobrarem ficam sem subcategoria e caem no grupo
+     *     "Sem subcategoria" na tela.
+     */
+    private suspend fun resolverSubCategoriaDasPecas(
+        categoriaId: Long,
+        pecas: List<com.example.data.model.PecaDTO>,
+        subs: List<com.example.data.model.SubCategoriaDTO>
+    ): Map<Long, com.example.data.model.SubCategoriaDTO> {
+        if (pecas.isEmpty() || subs.isEmpty()) return emptyMap()
+
+        val porId = subs.associateBy { it.id }
+        val mapa = mutableMapOf<Long, com.example.data.model.SubCategoriaDTO>()
+
+        // 1º caminho: a própria peça já traz a subcategoria
+        pecas.forEach { peca ->
+            val sub = peca.subCategoriaId?.let { porId[it] }
+                ?: peca.subCategoriaNome?.let { nome ->
+                    subs.find { it.nome.equals(nome, ignoreCase = true) }
+                }
+            if (sub != null) mapa[peca.idPeca] = sub
+        }
+        if (mapa.size == pecas.size) return mapa
+
+        // 2º caminho: descobre pelo lote de origem das peças que faltaram
+        return try {
+            val lotesDaCategoria = repository.getLotes().filter {
+                it.categoria?.id == categoriaId && it.subCategoria != null && it.quantidadeAtual > 0
+            }
+            if (lotesDaCategoria.isEmpty()) return mapa
+
+            val faltando = pecas.filter { !mapa.containsKey(it.idPeca) }.map { it.idPeca }.toSet()
+
+            // Peças que já vieram com loteId não precisam de nova chamada
+            val subPorLote = lotesDaCategoria.associate { it.idLote to it.subCategoria!! }
+            val aindaFaltando = faltando.toMutableSet()
+            pecas.forEach { peca ->
+                if (peca.idPeca in aindaFaltando) {
+                    val sub = peca.loteId?.let { subPorLote[it] }
+                    if (sub != null) {
+                        mapa[peca.idPeca] = sub
+                        aindaFaltando.remove(peca.idPeca)
+                    }
+                }
+            }
+            if (aindaFaltando.isEmpty()) return mapa
+
+            // Último recurso: lista as peças de cada lote (em paralelo) e cruza pelo id
+            coroutineScope {
+                lotesDaCategoria.map { lote ->
+                    async {
+                        lote.idLote to runCatching { repository.getPecasDoLote(lote.idLote) }
+                            .getOrDefault(emptyList())
+                    }
+                }.awaitAll()
+            }.forEach { (loteId, pecasDoLote) ->
+                val sub = subPorLote[loteId] ?: return@forEach
+                pecasDoLote.forEach { p ->
+                    if (p.idPeca in aindaFaltando) mapa[p.idPeca] = sub
+                }
+            }
+            mapa
+        } catch (e: Exception) {
+            Log.e("AppViewModel", "resolverSubCategoriaDasPecas error: ${e.message}")
+            mapa
         }
     }
 
@@ -867,6 +1022,68 @@ class AppViewModel : ViewModel() {
 
     private val _pecasDoLoteLoading = MutableStateFlow(false)
     val pecasDoLoteLoading: StateFlow<Boolean> = _pecasDoLoteLoading.asStateFlow()
+
+    // Faixa de peças (primeiro/último número) por lote — carregada de forma leve,
+    // sem precisar buscar a lista inteira de peças do lote.
+    private val _faixaPecasPorLote = MutableStateFlow<Map<Long, Pair<String?, String?>>>(emptyMap())
+    val faixaPecasPorLote: StateFlow<Map<Long, Pair<String?, String?>>> = _faixaPecasPorLote.asStateFlow()
+
+    fun loadFaixaPecas(loteId: Long) {
+        if (_faixaPecasPorLote.value.containsKey(loteId)) return
+        viewModelScope.launch {
+            try {
+                val faixa = repository.getFaixaPecasDoLote(loteId)
+                _faixaPecasPorLote.value = _faixaPecasPorLote.value + (loteId to faixa)
+            } catch (e: Exception) {
+                Log.e("AppViewModel", "loadFaixaPecas error: ${e.message}")
+            }
+        }
+    }
+
+    // Catálogo de jogos (Tbl_Jogos) - usado no cadastro manual de lote (ex: fornecedor AEC)
+    private val _jogos = MutableStateFlow<List<com.example.data.model.JogoDTO>>(emptyList())
+    val jogos: StateFlow<List<com.example.data.model.JogoDTO>> = _jogos.asStateFlow()
+
+    fun loadJogos() {
+        if (_jogos.value.isNotEmpty()) return
+        viewModelScope.launch {
+            try {
+                _jogos.value = repository.getJogos()
+            } catch (e: Exception) {
+                Log.e("AppViewModel", "loadJogos error: ${e.message}")
+            }
+        }
+    }
+
+    fun criarLoteManual(
+        categoriaId: Long,
+        subCategoriaId: Long? = null,
+        fornecedor: String,
+        descricao: String?,
+        dataEntrada: String?,
+        pecas: List<com.example.data.model.PecaManualDTO>,
+        onResult: (Boolean) -> Unit
+    ) {
+        viewModelScope.launch {
+            val request = com.example.data.model.LoteManualRequestDTO(
+                categoriaId = categoriaId,
+                subCategoriaId = subCategoriaId,
+                fornecedor = fornecedor,
+                descricao = descricao,
+                dataEntrada = dataEntrada,
+                pecas = pecas
+            )
+            val resultado = repository.criarLoteManual(request)
+            if (resultado != null) {
+                showNotification("Lote manual criado com sucesso.")
+                _pecasDoLote.value = emptyMap()
+                loadLotes()
+            } else {
+                showNotification("Erro ao criar lote manual.")
+            }
+            onResult(resultado != null)
+        }
+    }
 
     fun loadLotes() {
         viewModelScope.launch {
@@ -896,8 +1113,47 @@ class AppViewModel : ViewModel() {
         }
     }
 
+    private suspend fun refreshPecasDoLote(loteId: Long) {
+        try {
+            val pecas = repository.getPecasDoLote(loteId)
+            _pecasDoLote.value = _pecasDoLote.value + (loteId to pecas)
+        } catch (e: Exception) {
+            Log.e("AppViewModel", "refreshPecasDoLote error: ${e.message}")
+        }
+    }
+
+    fun retirarPeca(idPeca: Long, loteId: Long, observacao: String?, onResult: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            val usuario = _usuarioLogado.value?.nome ?: _usuarioLogado.value?.username
+            val sucesso = repository.retirarPeca(idPeca, observacao, usuario)
+            if (sucesso) {
+                showNotification("Peça devolvida ao estoque.")
+                refreshPecasDoLote(loteId)
+                loadLotes()
+            } else {
+                showNotification("Erro ao retirar peça.")
+            }
+            onResult(sucesso)
+        }
+    }
+
+    fun descartarPeca(idPeca: Long, loteId: Long, observacao: String?, onResult: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            val usuario = _usuarioLogado.value?.nome ?: _usuarioLogado.value?.username
+            val sucesso = repository.descartarPeca(idPeca, observacao, usuario)
+            if (sucesso) {
+                showNotification("Peça marcada como perda total (P.T.).")
+                refreshPecasDoLote(loteId)
+            } else {
+                showNotification("Erro ao descartar peça.")
+            }
+            onResult(sucesso)
+        }
+    }
+
     fun criarLote(
         categoriaId: Long,
+        subCategoriaId: Long? = null,
         alias: String,
         fornecedor: String?,
         codigo: String?,
@@ -910,6 +1166,7 @@ class AppViewModel : ViewModel() {
         viewModelScope.launch {
             val request = com.example.data.model.LoteRequestDTO(
                 categoriaId = categoriaId,
+                subCategoriaId = subCategoriaId,
                 alias = alias,
                 fornecedor = fornecedor,
                 codigo = codigo,
@@ -949,11 +1206,13 @@ class AppViewModel : ViewModel() {
 
     fun clearPecasDisponiveis() {
         _pecasDisponiveis.value = emptyList()
+        _subCategoriaPorPeca.value = emptyMap()
+        _subCategorias.value = emptyList()
     }
 
     fun performRegistrarExecucao(
         solicitacaoId: Long,
-        execucoesPorProblema: Map<Long, Pair<String, List<Long>>>,
+        execucoesPorProblema: Map<Long, Triple<String, List<Long>, String?>>,
         nomeCliente: String? = null,
         context: Context? = null,
         onResult: (Boolean) -> Unit
@@ -971,14 +1230,15 @@ class AppViewModel : ViewModel() {
         val formatter = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.getDefault())
         val agora = formatter.format(java.util.Date())
 
-        val lista = execucoesPorProblema.map { (problemaId, pair) ->
+        val lista = execucoesPorProblema.map { (problemaId, dados) ->
             com.example.data.model.ExecucaoRequestDTO(
                 problemaId    = problemaId,
                 solicitacaoId = solicitacaoId,
                 dataExecucao  = agora,
                 tecnico       = tecnico,
-                descricao     = pair.first,
-                pecasUsadas   = pair.second
+                descricao     = dados.first,
+                pecasUsadas   = dados.second,
+                fotoBase64    = dados.third
             )
         }
 
@@ -1043,5 +1303,249 @@ class AppViewModel : ViewModel() {
                 _logEnviosLoading.value = false
             }
         }
+    }
+
+    // --- TROCA DE SENHA ---
+    private val _trocarSenhaLoading = MutableStateFlow(false)
+    val trocarSenhaLoading: StateFlow<Boolean> = _trocarSenhaLoading.asStateFlow()
+
+    fun performTrocarSenha(
+        username: String,
+        senhaAtual: String,
+        senhaNova: String,
+        onResult: (sucesso: Boolean, mensagem: String) -> Unit
+    ) {
+        if (username.isBlank() || senhaAtual.isBlank() || senhaNova.isBlank()) {
+            onResult(false, "Preencha usuário, senha atual e nova senha.")
+            return
+        }
+        if (senhaNova.length < 4) {
+            onResult(false, "A nova senha deve ter pelo menos 4 caracteres.")
+            return
+        }
+
+        viewModelScope.launch {
+            _trocarSenhaLoading.value = true
+            try {
+                val (sucesso, mensagem) = repository.trocarSenha(username.trim(), senhaAtual, senhaNova)
+                onResult(sucesso, mensagem)
+            } catch (e: Exception) {
+                Log.e("AppViewModel", "performTrocarSenha error: ${e.message}")
+                onResult(false, "Erro inesperado ao trocar a senha.")
+            } finally {
+                _trocarSenhaLoading.value = false
+            }
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // CONTROLE DE CHAVES
+    // ─────────────────────────────────────────────────────────────
+
+    private val _chaves = MutableStateFlow<List<com.example.data.model.ChaveDTO>>(emptyList())
+    val chaves: StateFlow<List<com.example.data.model.ChaveDTO>> = _chaves.asStateFlow()
+
+    private val _chavesLoading = MutableStateFlow(false)
+    val chavesLoading: StateFlow<Boolean> = _chavesLoading.asStateFlow()
+
+    private val _fornecedoresChave = MutableStateFlow<List<com.example.data.model.FornecedorChaveDTO>>(emptyList())
+    val fornecedoresChave: StateFlow<List<com.example.data.model.FornecedorChaveDTO>> = _fornecedoresChave.asStateFlow()
+
+    // Filtros da tela de chaves (ficam no ViewModel pra sobreviver a rotação de tela)
+    private val _chaveFiltroNumero = MutableStateFlow("")
+    val chaveFiltroNumero: StateFlow<String> = _chaveFiltroNumero.asStateFlow()
+
+    private val _chaveFiltroFornecedorId = MutableStateFlow<Long?>(null)
+    val chaveFiltroFornecedorId: StateFlow<Long?> = _chaveFiltroFornecedorId.asStateFlow()
+
+    private val _chaveFiltroTipo = MutableStateFlow<String?>(null)
+    val chaveFiltroTipo: StateFlow<String?> = _chaveFiltroTipo.asStateFlow()
+
+    /** true = ativas, false = inativas, null = todas. */
+    private val _chaveFiltroAtivo = MutableStateFlow<Boolean?>(true)
+    val chaveFiltroAtivo: StateFlow<Boolean?> = _chaveFiltroAtivo.asStateFlow()
+
+    fun setChaveFiltroNumero(valor: String) {
+        _chaveFiltroNumero.value = valor
+    }
+
+    fun setChaveFiltroFornecedor(id: Long?) {
+        _chaveFiltroFornecedorId.value = id
+        loadChaves()
+    }
+
+    fun setChaveFiltroTipo(tipo: String?) {
+        _chaveFiltroTipo.value = tipo
+        loadChaves()
+    }
+
+    fun setChaveFiltroAtivo(ativo: Boolean?) {
+        _chaveFiltroAtivo.value = ativo
+        loadChaves()
+    }
+
+    fun limparFiltrosChave() {
+        _chaveFiltroNumero.value = ""
+        _chaveFiltroFornecedorId.value = null
+        _chaveFiltroTipo.value = null
+        _chaveFiltroAtivo.value = true
+        loadChaves()
+    }
+
+    fun loadChaves() {
+        viewModelScope.launch {
+            _chavesLoading.value = true
+            try {
+                _chaves.value = repository.getChaves(
+                    numero = _chaveFiltroNumero.value,
+                    fornecedorId = _chaveFiltroFornecedorId.value,
+                    tipo = _chaveFiltroTipo.value,
+                    ativo = _chaveFiltroAtivo.value
+                ).sortedWith { a, b -> compararNatural(a.codigo ?: "", b.codigo ?: "") }
+
+            } catch (e: Exception) {
+                Log.e("AppViewModel", "loadChaves error: ${e.message}")
+            } finally {
+                _chavesLoading.value = false
+            }
+        }
+    }
+
+    fun loadFornecedoresChave() {
+        viewModelScope.launch {
+            try {
+                _fornecedoresChave.value = repository.getFornecedoresChave()
+            } catch (e: Exception) {
+                Log.e("AppViewModel", "loadFornecedoresChave error: ${e.message}")
+            }
+        }
+    }
+
+    /** id nulo = nova chave; id preenchido = edição. */
+    fun salvarChave(
+        id: Long?,
+        request: com.example.data.model.ChaveRequestDTO,
+        onResult: (Boolean) -> Unit
+    ) {
+        viewModelScope.launch {
+            _chavesLoading.value = true
+            val resultado = repository.salvarChave(id, request)
+            _chavesLoading.value = false
+            if (resultado.sucesso) {
+                showNotification("Chave ${resultado.chave?.codigo ?: ""} salva.")
+                loadChaves()
+                onResult(true)
+            } else {
+                showNotification(resultado.erro ?: "Erro ao salvar a chave.")
+                onResult(false)
+            }
+        }
+    }
+
+    fun alterarAtivoChave(id: Long, ativo: Boolean) {
+        viewModelScope.launch {
+            val resultado = repository.alterarAtivoChave(id, ativo)
+            if (resultado.sucesso) {
+                showNotification(if (ativo) "Chave reativada." else "Chave desativada.")
+                loadChaves()
+            } else {
+                showNotification(resultado.erro ?: "Erro ao alterar a chave.")
+            }
+        }
+    }
+
+    fun criarFornecedorChave(nome: String, onResult: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            val resultado = repository.criarFornecedorChave(nome)
+            if (resultado.sucesso) {
+                showNotification("Fornecedor ${resultado.fornecedor?.nome ?: ""} criado.")
+                loadFornecedoresChave()
+                onResult(true)
+            } else {
+                showNotification(resultado.erro ?: "Erro ao criar o fornecedor.")
+                onResult(false)
+            }
+        }
+    }
+    // ---------- VÍNCULO CHAVE ↔ MÁQUINA ----------
+    // Estado fica no diálogo (é temporário); aqui só as chamadas.
+
+    /** onResult(null) = falhou. */
+    fun loadMaquinasDaChave(
+        chaveId: Long,
+        historico: Boolean,
+        onResult: (List<com.example.data.model.VinculoChaveDTO>?) -> Unit
+    ) {
+        viewModelScope.launch {
+            onResult(repository.getMaquinasDaChave(chaveId, historico))
+        }
+    }
+
+    fun loadPracasChave(onResult: (List<String>) -> Unit) {
+        viewModelScope.launch {
+            onResult(repository.getPracasChave())
+        }
+    }
+
+    fun buscarMaquinasPorNumero(
+        numero: String,
+        praca: String?,
+        onResult: (List<com.example.data.model.MaquinaOpcaoDTO>) -> Unit
+    ) {
+        viewModelScope.launch {
+            val (lista, erro) = repository.buscarMaquinasPorNumero(numero, praca)
+            if (erro != null) showNotification(erro)
+            onResult(lista)
+        }
+    }
+
+    fun vincularChave(
+        maquinaId: Long,
+        chaveId: Long,
+        uso: String,
+        onResult: (Boolean) -> Unit
+    ) {
+        viewModelScope.launch {
+            val resultado = repository.vincularChave(
+                maquinaId,
+                com.example.data.model.VinculoChaveRequestDTO(chaveId = chaveId, uso = uso, observacao = null)
+            )
+            if (resultado.sucesso) {
+                val v = resultado.vinculo
+                showNotification("Chave ${v?.chaveCodigo ?: ""} vinculada à máquina ${v?.praca ?: ""} - ${v?.maquinaNome?.trim() ?: ""}.")
+                onResult(true)
+            } else {
+                showNotification(resultado.erro ?: "Erro ao vincular a chave.")
+                onResult(false)
+            }
+        }
+    }
+
+    fun encerrarVinculoChave(id: Long, observacao: String?, onResult: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            val resultado = repository.encerrarVinculoChave(id, observacao)
+            if (resultado.sucesso) {
+                showNotification("Chave retirada da máquina (fica no histórico).")
+                onResult(true)
+            } else {
+                showNotification(resultado.erro ?: "Erro ao retirar a chave.")
+                onResult(false)
+            }
+        }
+    }
+
+    // Ordena texto com números do jeito "humano": CP4 < CP5 < CP10
+    private fun compararNatural(a: String, b: String): Int {
+        val regex = Regex("\\d+|\\D+")
+        val pa = regex.findAll(a.uppercase()).map { it.value }.toList()
+        val pb = regex.findAll(b.uppercase()).map { it.value }.toList()
+        for (i in 0 until minOf(pa.size, pb.size)) {
+            val x = pa[i]; val y = pb[i]
+            val cmp = if (x[0].isDigit() && y[0].isDigit())
+                x.toBigInteger().compareTo(y.toBigInteger())
+            else x.compareTo(y)
+            if (cmp != 0) return cmp
+        }
+        return pa.size - pb.size
     }
 }

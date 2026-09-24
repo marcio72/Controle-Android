@@ -32,7 +32,7 @@ val DarkTextSecondary = Color(0xFF94A3B8) // Slate 400
 // Retro CRT Terminal Colors (used in Nova Solicitação: Cliente, Máquina, Ocorrência)
 val TerminalBackground = Color(0xFF0A0A0A)      // Solid black CRT background
 val TerminalBorder = Color(0xFF1F3D1F)          // Dark green border
-val TerminalGreen = Color(0xFF2EE85C)           // Standard text green
-val TerminalGreenBright = Color(0xFF33FF66)     // Selected/highlighted item green
+val TerminalGreen = Color(0xFFEAEAEA)           // Standard text (branco levemente suave)
+val TerminalGreenBright = Color(0xFFFFFFFF)     // Selected/highlighted item (branco)
 val TerminalSelectedBg = Color(0xFF102010)      // Slightly lighter bg for selected item
-val TerminalHint = Color(0xFF1F8F3E)            // Dim green for placeholder/hint text
+val TerminalHint = Color(0xFFB0B0B0)            // Placeholder/hint text (cinza claro)
